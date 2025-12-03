@@ -910,20 +910,45 @@ class PlexRatingsSync:
 def find_plex_database():
     """Trouve automatiquement la base de données Plex"""
     possible_paths = [
-        # Snap installation (plus courant maintenant)
+        # Linux - Snap installation (plus courant maintenant)
         Path("/var/snap/plexmediaserver/common/Library/Application Support/Plex Media Server/Plug-in Support/Databases/com.plexapp.plugins.library.db"),
-        # Linux standard
-        Path.home() / ".config/Plex Media Server/Plug-in Support/Databases/com.plexapp.plugins.library.db",
+        # Linux - Apt installation
         Path("/var/lib/plexmediaserver/Library/Application Support/Plex Media Server/Plug-in Support/Databases/com.plexapp.plugins.library.db"),
+        # Linux - Flatpak installation
+        Path("/home").joinpath(".var/app/tv.plex.PlexMediaServer/data/plex/Library/Application Support/Plex Media Server/Plug-in Support/Databases/com.plexapp.plugins.library.db"),
         # macOS
         Path.home() / "Library/Application Support/Plex Media Server/Plug-in Support/Databases/com.plexapp.plugins.library.db",
         # Windows
-        Path.home() / "AppData/Local/Plex Media Server/Plug-in Support/Databases/com.plexapp.plugins.library.db"
+        Path.home() / "AppData/Local/Plex Media Server/Plug-in Support/Databases/com.plexapp.plugins.library.db",
+        # Linux - Plex Media Server dans home (installation manuelle)
+        Path.home() / "Library/Application Support/Plex Media Server/Plug-in Support/Databases/com.plexapp.plugins.library.db",
+        # Recherche récursive dans les répertoires Plex courants
     ]
     
+    # Essayer les chemins directs d'abord
     for path in possible_paths:
         if path.exists():
             return str(path)
+    
+    # Si aucun chemin direct ne fonctionne, essayer une recherche récursive
+    search_dirs = [
+        Path("/var/snap/plexmediaserver"),
+        Path("/var/lib/plexmediaserver"),
+        Path.home() / "Library/Application Support",
+        Path.home() / "AppData/Local",
+        Path("/opt/plexmediaserver"),
+        Path("/usr/local/plexmediaserver")
+    ]
+    
+    for search_dir in search_dirs:
+        if search_dir.exists():
+            try:
+                # Chercher le fichier de base de données
+                for db_file in search_dir.rglob("com.plexapp.plugins.library.db"):
+                    if db_file.is_file():
+                        return str(db_file)
+            except (OSError, PermissionError):
+                continue
     
     return None
 

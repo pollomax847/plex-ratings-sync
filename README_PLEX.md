@@ -61,10 +61,10 @@ python3 plex_ratings_sync.py --plex-db /chemin/vers/com.plexapp.plugins.library.
 
 ### Chemins Plex courants
 
-- **Linux (Snap)** : `/var/snap/plexmediaserver/common/Library/Application Support/Plex Media Server/Plug-in Support/Databases/`
-- **Linux (Apt)** : `/var/lib/plexmediaserver/Library/Application Support/Plex Media Server/Plug-in Support/Databases/`
-- **macOS** : `~/Library/Application Support/Plex Media Server/Plug-in Support/Databases/`
-- **Windows** : `%LOCALAPPDATA%\Plex Media Server\Plug-in Support\Databases\`
+- **Linux (Snap)** : `/var/snap/plexmediaserver/common/Library/Application Support/Plex Media Server/Plug-in Support/Databases/com.plexapp.plugins.library.db`
+- **Linux (Apt)** : `/var/lib/plexmediaserver/Library/Application Support/Plex Media Server/Plug-in Support/Databases/com.plexapp.plugins.library.db`
+- **macOS** : `~/Library/Application Support/Plex Media Server/Plug-in Support/Databases/com.plexapp.plugins.library.db`
+- **Windows** : `%LOCALAPPDATA%\Plex Media Server\Plug-in Support\Databases\com.plexapp.plugins.library.db`
 
 ## Fonctionnalités
 
