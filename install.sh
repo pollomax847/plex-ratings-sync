@@ -87,13 +87,16 @@ echo "🔍 Vérification de l'installation..."
 # Test du script principal
 if [ -f "plex_ratings_sync.py" ]; then
     echo "🧪 Test du script principal..."
-    if python3 -m py_compile plex_ratings_sync.py; then
+    if python3 -m py_compile plex_ratings_sync.py 2>/dev/null; then
         echo "✅ Script plex_ratings_sync.py : OK"
     else
         echo "❌ Script plex_ratings_sync.py : ERREUR de compilation"
+        echo "💡 Vérifiez votre installation Python"
+        exit 1
     fi
 else
     echo "❌ Script plex_ratings_sync.py non trouvé"
+    exit 1
 fi
 
 # Test du script de notifications
@@ -107,16 +110,80 @@ if [ -f "plex_notifications.sh" ]; then
     fi
 else
     echo "❌ Script plex_notifications.sh non trouvé"
+    exit 1
+fi
+
+# Test des imports Python
+echo "🧪 Test des imports Python..."
+if python3 -c "
+import sys
+try:
+    import sqlite3
+    import pathlib
+    import subprocess
+    import argparse
+    import logging
+    import json
+    import datetime
+    print('✅ Imports Python de base : OK')
+except ImportError as e:
+    print(f'❌ Import manquant : {e}')
+    sys.exit(1)
+"; then
+    echo "✅ Imports Python : OK"
+else
+    echo "❌ Problème avec les imports Python"
+    exit 1
+fi
+
+# Test de songrec
+echo "🧪 Test de songrec..."
+if command_exists songrec; then
+    if songrec --version >/dev/null 2>&1; then
+        SONGREC_VERSION=$(songrec --version 2>&1 | head -1)
+        echo "✅ songrec : OK ($SONGREC_VERSION)"
+    else
+        echo "⚠️ songrec installé mais ne répond pas"
+        echo "💡 Essayez : pip3 uninstall songrec && pip3 install songrec"
+    fi
+else
+    echo "❌ songrec n'est pas installé"
+    echo "💡 Installez-le avec : pip3 install songrec"
+    exit 1
+fi
+
+# Test final du script
+echo "🧪 Test final du script..."
+if python3 plex_ratings_sync.py --help >/dev/null 2>&1; then
+    echo "✅ Script entièrement fonctionnel"
+else
+    echo "❌ Le script ne fonctionne pas correctement"
+    echo "💡 Vérifiez les messages d'erreur ci-dessus"
+    exit 1
 fi
 
 echo ""
-echo "🎉 Installation terminée !"
+echo "🎉 Installation terminée avec succès !"
 echo ""
-echo "🚀 Utilisation rapide :"
-echo "   Simulation: python3 plex_ratings_sync.py --auto-find-db"
-echo "   Suppression: python3 plex_ratings_sync.py --auto-find-db --delete --backup ./backup"
-echo "   Statistiques: python3 plex_ratings_sync.py --auto-find-db --stats"
+echo "🚀 Guide de démarrage rapide :"
+echo "=============================="
 echo ""
-echo "📖 Consultez README_PLEX.md pour plus d'informations"
+echo "1️⃣ Test en mode simulation (recommandé) :"
+echo "   python3 plex_ratings_sync.py --auto-find-db"
 echo ""
-echo "🛡️ CONSEIL: Testez toujours en mode simulation d'abord !"
+echo "2️⃣ Voir les statistiques de vos ratings :"
+echo "   python3 plex_ratings_sync.py --auto-find-db --stats"
+echo ""
+echo "3️⃣ Suppression réelle (avec sauvegarde) :"
+echo "   python3 plex_ratings_sync.py --auto-find-db --delete --backup ./sauvegarde_$(date +%Y%m%d)"
+echo ""
+echo "📚 Documentation complète : README_PLEX.md"
+echo "🆘 Besoin d'aide ? Consultez la section Dépannage"
+echo ""
+echo "🛡️ RAPPEL DE SÉCURITÉ :"
+echo "- Testez toujours en simulation d'abord (--auto-find-db sans --delete)"
+echo "- Utilisez --backup pour créer des sauvegardes"
+echo "- Vérifiez les logs après chaque exécution"
+echo ""
+echo "⭐ Si ce script vous est utile, n'hésitez pas à mettre une étoile sur GitHub !"
+echo "   https://github.com/pollomax847/plex-ratings-sync"

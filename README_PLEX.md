@@ -1,5 +1,8 @@
 # Plex Ratings Sync
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+
 Script Python pour synchroniser les évaluations Plex avec le système de fichiers audio.
 
 ## 🚀 Installation Rapide
@@ -41,6 +44,27 @@ python3 plex_ratings_sync.py --help
 songrec --version
 python3 -c "import sqlite3, pathlib, subprocess; print('✅ Toutes les dépendances OK')"
 ```
+
+## ⚙️ Configuration
+
+### Base de données Plex
+
+Le script trouve automatiquement la base Plex, mais vous pouvez la spécifier manuellement :
+
+```bash
+# Recherche automatique (recommandé)
+python3 plex_ratings_sync.py --auto-find-db
+
+# Chemin manuel
+python3 plex_ratings_sync.py --plex-db /chemin/vers/com.plexapp.plugins.library.db
+```
+
+### Chemins Plex courants
+
+- **Linux (Snap)** : `/var/snap/plexmediaserver/common/Library/Application Support/Plex Media Server/Plug-in Support/Databases/`
+- **Linux (Apt)** : `/var/lib/plexmediaserver/Library/Application Support/Plex Media Server/Plug-in Support/Databases/`
+- **macOS** : `~/Library/Application Support/Plex Media Server/Plug-in Support/Databases/`
+- **Windows** : `%LOCALAPPDATA%\Plex Media Server\Plug-in Support\Databases\`
 
 ## Fonctionnalités
 
@@ -169,6 +193,77 @@ songrec --version
 songrec audio-file-to-recognized-song "fichier_audio.mp3"
 ```
 
-## Licence
+## ❓ FAQ
 
-Ce projet est fourni tel quel, sans garantie. Utilisez à vos risques et périls.
+### Le script ne trouve pas ma base Plex ?
+
+```bash
+# Chercher manuellement
+find / -name "com.plexapp.plugins.library.db" 2>/dev/null
+
+# Puis spécifier le chemin
+python3 plex_ratings_sync.py --plex-db /chemin/trouvé/com.plexapp.plugins.library.db
+```
+
+### Comment annuler une suppression ?
+
+- Les fichiers supprimés ne peuvent pas être récupérés automatiquement
+- Utilisez toujours `--backup` pour créer une sauvegarde
+- Vérifiez les logs pour voir ce qui a été supprimé
+
+### Songrec ne reconnaît pas mes fichiers ?
+
+- Vérifiez que les fichiers audio sont lisibles
+- Testez manuellement : `songrec audio-file-to-recognized-song "fichier.mp3"`
+- Certains fichiers très courts ou bruités peuvent ne pas être reconnus
+
+### Puis-je utiliser le script sur Windows ?
+
+- Oui, mais vous devrez adapter les chemins dans le script
+- La base Plex se trouve généralement dans `%LOCALAPPDATA%\Plex Media Server\`
+
+### Le script est-il sûr ?
+
+- **Mode simulation** : Testez toujours d'abord sans `--delete`
+- **Sauvegarde** : Utilisez `--backup` pour conserver une copie
+- **Logs** : Vérifiez toujours les logs après exécution
+
+## 🤝 Contribuer
+
+Les contributions sont les bienvenues ! Voici comment participer :
+
+### Signaler un bug
+
+1. Vérifiez que le bug n'a pas déjà été signalé
+2. Utilisez le template de bug avec :
+   - Version de Python
+   - Système d'exploitation
+   - Commande utilisée
+   - Logs d'erreur complets
+
+### Proposer une fonctionnalité
+
+1. Décrivez clairement le besoin
+2. Expliquez pourquoi cela serait utile
+3. Si possible, proposez une implémentation
+
+### Améliorer le code
+
+1. Fork le projet
+2. Créez une branche pour votre fonctionnalité
+3. Testez vos changements
+4. Soumettez une pull request
+
+### Code de conduite
+
+- Respectez les autres utilisateurs
+- Testez vos changements avant de les proposer
+- Documentez vos modifications
+
+## 📄 Licence
+
+Ce projet est distribué sous licence MIT. Voir le fichier `LICENSE` pour plus de détails.
+
+---
+
+**⭐ Si ce script vous est utile, n'hésitez pas à mettre une étoile sur GitHub !**
