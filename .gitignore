@@ -1,0 +1,42 @@
+# Fichiers à ignorer sur GitHub
+# Logs
+*.log
+plex_ratings_sync_*.log
+plex_deletions_*.json
+monthly_report_*.json
+duplicate_analysis_*.json
+
+# Environnements virtuels
+.venv/
+venv/
+env/
+
+# Données personnelles
+My Spotify Library.CSV
+ratings_stats.json
+
+# Fichiers temporaires
+*.tmp
+*.bak
+*~
+
+# Base de données Plex (ne jamais commiter !)
+com.plexapp.plugins.library.db
+*.db
+
+# Scripts personnels avec chemins absolus
+plex_rating_sync_complete.py
+duplicate_detector.py
+import_spotify_csv.py
+generate_monthly_report.py
+sync_spotify_playlist.py
+sync_ratings_to_id3.py
+playlist_manager.py
+sync_from_json.py
+redownload-corrupted-audio.py
+sync_m3u_playlists.py
+auto_playlists_plexamp.py
+
+# Répertoires de logs personnels
+logs/
+~/logs/
