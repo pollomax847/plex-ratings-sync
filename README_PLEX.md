@@ -155,6 +155,42 @@ Le script envoie automatiquement des notifications pour :
 - Fichiers identifiés avec songrec
 - Fichiers supprimés
 
+### Configuration des notifications
+
+```bash
+# Diagnostiquer les notifications
+./plex_notifications.sh diagnose
+
+# Configurer interactivement
+./plex_notifications.sh configure
+
+# Tester les notifications
+./plex_notifications.sh test
+```
+
+### Types de notifications
+
+- **Desktop** : Notifications graphiques (nécessite un environnement graphique)
+- **Sonore** : Sons de notification (PulseAudio/ALSA ou fallback ASCII bell)
+- **Email** : Notifications par email (optionnel, nécessite configuration)
+
+### Dépannage des notifications
+
+Si les notifications ne s'affichent pas :
+
+```bash
+# Vérifier l'environnement
+./plex_notifications.sh diagnose
+
+# Tester manuellement
+notify-send "Test" "Ceci est un test"
+
+# Vérifier la configuration
+cat ~/.config/plex_notifications.conf
+```
+
+**Note** : Les notifications desktop ne fonctionnent que dans un environnement graphique (X11/Wayland). Sur les serveurs headless, utilisez uniquement les notifications email.
+
 ## Structure des fichiers
 
 ```text

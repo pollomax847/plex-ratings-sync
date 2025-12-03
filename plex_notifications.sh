@@ -36,6 +36,23 @@ EOF
     source "$NOTIFICATION_CONFIG"
 }
 
+# Fonction pour jouer un son de notification (si disponible)
+play_notification_sound() {
+    local sound_type="${1:-bell}"
+    
+    # Essayer différents systèmes de son
+    if command -v paplay &> /dev/null; then
+        paplay /usr/share/sounds/freedesktop/stereo/$sound_type.oga 2>/dev/null && return 0
+    fi
+    
+    if command -v aplay &> /dev/null; then
+        aplay /usr/share/sounds/alsa/$sound_type.wav 2>/dev/null && return 0
+    fi
+    
+    # Fallback: bell ASCII
+    echo -e "\a" 2>/dev/null || true
+}
+
 # Fonction pour envoyer une notification desktop
 send_desktop_notification() {
     local title="$1"
@@ -43,14 +60,23 @@ send_desktop_notification() {
     local urgency="${3:-normal}"  # low, normal, critical
     local icon="${4:-audio-x-generic}"
     
-    if [ "$ENABLE_DESKTOP_NOTIFICATIONS" = "true" ] && command -v notify-send &> /dev/null; then
-        notify-send \
-            --urgency="$urgency" \
-            --icon="$icon" \
-            --app-name="Plex Audio Manager" \
-            --expire-time=10000 \
-            "$title" \
-            "$message"
+    if [ "$ENABLE_DESKTOP_NOTIFICATIONS" = "true" ]; then
+        # Vérifier si notify-send est disponible et si on peut envoyer des notifications
+        if command -v notify-send &> /dev/null; then
+            # Tester si on peut vraiment envoyer une notification (timeout court)
+            if timeout 2 notify-send --help &> /dev/null; then
+                notify-send \
+                    --urgency="$urgency" \
+                    --icon="$icon" \
+                    --app-name="Plex Audio Manager" \
+                    --expire-time=10000 \
+                    "$title" \
+                    "$message" 2>/dev/null && return 0
+            fi
+        fi
+        
+        # Fallback: notification console si desktop ne fonctionne pas
+        echo -e "${BLUE}🔔 [DESKTOP] $title: $message${NC}"
     fi
 }
 
@@ -82,6 +108,7 @@ notify_files_deleted() {
         local message="$count fichier(s) avec 1 étoile supprimé(s)"
         
         send_desktop_notification "$title" "$message" "normal" "user-trash-full"
+        play_notification_sound "bell"
         
         if [ "$ENABLE_EMAIL_NOTIFICATIONS" = "true" ]; then
             send_email_notification "Suppression terminée" "Nombre de fichiers supprimés: $count\n\nDétails:\n$details"
@@ -101,13 +128,16 @@ notify_songrec_completed() {
     local title="🔍 Songrec terminé"
     local message="Traités: $processed | Erreurs: $errors"
     local urgency="normal"
+    local sound="bell"
     
     if [ "$errors" -gt 0 ]; then
         urgency="critical"
         title="⚠️ Songrec avec erreurs"
+        sound="dialog-warning"
     fi
     
     send_desktop_notification "$title" "$message" "$urgency" "audio-card"
+    play_notification_sound "$sound"
     
     if [ "$ENABLE_EMAIL_NOTIFICATIONS" = "true" ]; then
         local body="Traitement songrec-rename terminé:
@@ -324,61 +354,114 @@ Le traitement est en cours..."
 test_notifications() {
     echo -e "${YELLOW}🧪 Test des notifications...${NC}"
     
-    send_desktop_notification "🧪 Test Plex" "Test de notification desktop" "normal" "audio-card"
+    # Test notification desktop
+    if [ "$ENABLE_DESKTOP_NOTIFICATIONS" = "true" ]; then
+        echo -n "Test notification desktop... "
+        if send_desktop_notification "🧪 Test Plex" "Test de notification desktop" "normal" "audio-card"; then
+            echo -e "${GREEN}✅ Desktop OK${NC}"
+        else
+            echo -e "${RED}❌ Desktop KO (affichage console)${NC}"
+        fi
+    else
+        echo -e "${BLUE}ℹ️ Notifications desktop désactivées${NC}"
+    fi
     
+    # Test son
+    echo -n "Test notification sonore... "
+    if play_notification_sound "bell"; then
+        echo -e "${GREEN}✅ Son OK${NC}"
+    else
+        echo -e "${YELLOW}⚠️ Son limité (bell ASCII)${NC}"
+    fi
+    
+    # Test email
     if [ "$ENABLE_EMAIL_NOTIFICATIONS" = "true" ]; then
-        send_email_notification "Test" "Test de notification email depuis le système Plex Audio Manager."
+        echo -n "Test notification email... "
+        if send_email_notification "Test" "Test de notification email depuis le système Plex Audio Manager."; then
+            echo -e "${GREEN}✅ Email OK${NC}"
+        else
+            echo -e "${RED}❌ Email KO${NC}"
+        fi
+    else
+        echo -e "${BLUE}ℹ️ Notifications email désactivées${NC}"
     fi
     
     echo -e "${GREEN}✅ Test terminé${NC}"
+    
+    # Résumé
+    echo -e "${BLUE}📋 Résumé des notifications actives:${NC}"
+    echo "   Desktop: $([ "$ENABLE_DESKTOP_NOTIFICATIONS" = "true" ] && echo "Activé" || echo "Désactivé")"
+    echo "   Email: $([ "$ENABLE_EMAIL_NOTIFICATIONS" = "true" ] && echo "Activé" || echo "Désactivé")"
+    echo "   Sonore: Activé (fallback disponible)"
 }
 
-# Configuration interactive
-configure_notifications() {
-    echo -e "${BLUE}🔧 Configuration des notifications${NC}"
+# Fonction de diagnostic
+diagnose_notifications() {
+    echo -e "${BLUE}🔍 Diagnostic complet des notifications${NC}"
     echo ""
     
-    # Desktop notifications
-    echo -n "Activer les notifications desktop? (y/N): "
-    read -r enable_desktop
-    if [[ $enable_desktop =~ ^[Yy]$ ]]; then
-        ENABLE_DESKTOP_NOTIFICATIONS=true
+    echo -e "${YELLOW}Environnement système:${NC}"
+    echo "   OS: $(uname -s) $(uname -r)"
+    echo "   Desktop: ${XDG_CURRENT_DESKTOP:-'Inconnu'} (${DESKTOP_SESSION:-'N/A'})"
+    echo "   Display: ${DISPLAY:-'Non défini'}"
+    echo "   User: $(whoami)"
+    echo ""
+    
+    echo -e "${YELLOW}Outils disponibles:${NC}"
+    echo "   notify-send: $(command -v notify-send &> /dev/null && echo "✅ $(notify-send --version 2>&1 | head -1)" || echo "❌ Non installé")"
+    echo "   paplay: $(command -v paplay &> /dev/null && echo "✅ PulseAudio" || echo "❌ Non disponible")"
+    echo "   aplay: $(command -v aplay &> /dev/null && echo "✅ ALSA" || echo "❌ Non disponible")"
+    echo "   mail: $(command -v mail &> /dev/null && echo "✅ $(mail --version 2>&1 | head -1)" || echo "❌ Non installé")"
+    echo "   sendmail: $(command -v sendmail &> /dev/null && echo "✅ Disponible" || echo "❌ Non disponible")"
+    echo ""
+    
+    echo -e "${YELLOW}Configuration actuelle:${NC}"
+    echo "   Fichier config: ${NOTIFICATION_CONFIG}"
+    echo "   Desktop activé: $([ "$ENABLE_DESKTOP_NOTIFICATIONS" = "true" ] && echo "✅ Oui" || echo "❌ Non")"
+    echo "   Email activé: $([ "$ENABLE_EMAIL_NOTIFICATIONS" = "true" ] && echo "✅ Oui" || echo "❌ Non")"
+    echo "   Destinataire: ${EMAIL_RECIPIENT:-'Non défini'}"
+    echo ""
+    
+    echo -e "${YELLOW}Test des fonctionnalités:${NC}"
+    
+    # Test desktop
+    echo -n "   Notification desktop: "
+    if [ "$ENABLE_DESKTOP_NOTIFICATIONS" = "true" ] && command -v notify-send &> /dev/null; then
+        if timeout 2 notify-send "Test diagnostic" "Ceci est un test de diagnostic" --expire-time=2000 2>/dev/null; then
+            echo -e "${GREEN}✅ Fonctionnelle${NC}"
+        else
+            echo -e "${RED}❌ Échec (vérifiez votre environnement graphique)${NC}"
+        fi
     else
-        ENABLE_DESKTOP_NOTIFICATIONS=false
+        echo -e "${BLUE}ℹ️ Désactivée ou non disponible${NC}"
     fi
     
-    # Email notifications
-    echo -n "Activer les notifications email? (y/N): "
-    read -r enable_email
-    if [[ $enable_email =~ ^[Yy]$ ]]; then
-        ENABLE_EMAIL_NOTIFICATIONS=true
-        echo -n "Adresse email destinataire: "
-        read -r EMAIL_RECIPIENT
+    # Test son
+    echo -n "   Notification sonore: "
+    if play_notification_sound "bell" 2>/dev/null; then
+        echo -e "${GREEN}✅ Fonctionnelle${NC}"
     else
-        ENABLE_EMAIL_NOTIFICATIONS=false
-        EMAIL_RECIPIENT=""
+        echo -e "${YELLOW}⚠️ Limitée (bell ASCII)${NC}"
     fi
     
-    # Sauvegarder la configuration
-    cat > "$NOTIFICATION_CONFIG" << EOF
-# Configuration des notifications Plex
-ENABLE_DESKTOP_NOTIFICATIONS=$ENABLE_DESKTOP_NOTIFICATIONS
-ENABLE_EMAIL_NOTIFICATIONS=$ENABLE_EMAIL_NOTIFICATIONS
-EMAIL_RECIPIENT="$EMAIL_RECIPIENT"
-SMTP_SERVER="$SMTP_SERVER"
-NOTIFICATION_LEVEL="info"
-LOG_NOTIFICATIONS=true
-EOF
-    
-    echo -e "${GREEN}✅ Configuration sauvegardée dans: $NOTIFICATION_CONFIG${NC}"
-    
-    # Test
-    echo -n "Tester les notifications? (Y/n): "
-    read -r test_now
-    if [[ ! $test_now =~ ^[Nn]$ ]]; then
-        load_config
-        test_notifications
+    # Test email
+    echo -n "   Notification email: "
+    if [ "$ENABLE_EMAIL_NOTIFICATIONS" = "true" ] && [ -n "$EMAIL_RECIPIENT" ]; then
+        if command -v mail &> /dev/null || command -v sendmail &> /dev/null; then
+            echo -e "${GREEN}✅ Configurée${NC}"
+        else
+            echo -e "${RED}❌ Outil d'envoi non disponible${NC}"
+        fi
+    else
+        echo -e "${BLUE}ℹ️ Non configurée${NC}"
     fi
+    
+    echo ""
+    echo -e "${BLUE}💡 Conseils de dépannage:${NC}"
+    echo "   • Si desktop ne fonctionne pas: vérifiez que vous êtes dans un environnement graphique"
+    echo "   • Si email ne fonctionne pas: configurez un serveur SMTP ou utilisez mail/sendmail"
+    echo "   • Pour les serveurs headless: utilisez uniquement les notifications email"
+    echo "   • Testez avec: ./plex_notifications.sh test"
 }
 
 # Fonction principale
@@ -422,6 +505,9 @@ main() {
         "configure"|"config")
             configure_notifications
             ;;
+        "diagnose"|"diag")
+            diagnose_notifications
+            ;;
         "help"|*)
             echo "Usage: $0 [action] [parameters]"
             echo ""
@@ -437,6 +523,7 @@ main() {
             echo "  minor_error error_type error_message"
             echo "  test              - Tester les notifications"
             echo "  configure         - Configuration interactive"
+            echo "  diagnose          - Diagnostic complet du système de notifications"
             ;;
     esac
 }
