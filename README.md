@@ -73,7 +73,7 @@ python3 plex_ratings_sync.py --plex-db /chemin/vers/com.plexapp.plugins.library.
 - **Support albums/artistes** : Peut supprimer des albums ou artistes entiers selon leur rating
 - **Sauvegarde** : Option de sauvegarde avant suppression
 - **Nettoyage automatique** : Supprime les anciens logs
-- **Notifications** : Envoie des notifications desktop/email
+- **Notifications** : Envoie des notifications desktop
 - **Mode simulation** : Teste sans supprimer réellement
 
 ## 🎯 Premiers Pas
