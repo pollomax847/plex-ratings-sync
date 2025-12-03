@@ -12,8 +12,9 @@ NC='\033[0m'
 NOTIFICATION_CONFIG="$HOME/.config/plex_notifications.conf"
 DEFAULT_EMAIL=""
 DEFAULT_SMTP_SERVER=""
-DEFAULT_ENABLE_DESKTOP=true
-DEFAULT_ENABLE_EMAIL=false
+DEFAULT_ENABLE_DESKTOP=false  # Désactivé par défaut pour simplifier
+DEFAULT_ENABLE_EMAIL=true     # Activé par défaut si email configuré
+DEFAULT_ENABLE_CONSOLE=true   # Toujours activé pour feedback
 
 # Charger la configuration
 load_config() {
@@ -25,6 +26,7 @@ load_config() {
 # Configuration des notifications Plex
 ENABLE_DESKTOP_NOTIFICATIONS=$DEFAULT_ENABLE_DESKTOP
 ENABLE_EMAIL_NOTIFICATIONS=$DEFAULT_ENABLE_EMAIL
+ENABLE_CONSOLE_NOTIFICATIONS=$DEFAULT_ENABLE_CONSOLE
 EMAIL_RECIPIENT="$DEFAULT_EMAIL"
 SMTP_SERVER="$DEFAULT_SMTP_SERVER"
 NOTIFICATION_LEVEL="info"  # debug, info, warning, error
@@ -61,22 +63,31 @@ send_desktop_notification() {
     local icon="${4:-audio-x-generic}"
     
     if [ "$ENABLE_DESKTOP_NOTIFICATIONS" = "true" ]; then
-        # Vérifier si notify-send est disponible et si on peut envoyer des notifications
+        # Essayer notify-send en premier
         if command -v notify-send &> /dev/null; then
-            # Tester si on peut vraiment envoyer une notification (timeout court)
-            if timeout 2 notify-send --help &> /dev/null; then
-                notify-send \
-                    --urgency="$urgency" \
-                    --icon="$icon" \
-                    --app-name="Plex Audio Manager" \
-                    --expire-time=10000 \
-                    "$title" \
-                    "$message" 2>/dev/null && return 0
-            fi
+            notify-send \
+                --urgency="$urgency" \
+                --icon="$icon" \
+                --app-name="Plex Audio Manager" \
+                --expire-time=5000 \
+                "$title" \
+                "$message" 2>/dev/null && return 0
         fi
-        
-        # Fallback: notification console si desktop ne fonctionne pas
-        echo -e "${BLUE}🔔 [DESKTOP] $title: $message${NC}"
+    fi
+    
+    # Fallback: notification console colorée si activée
+    if [ "$ENABLE_CONSOLE_NOTIFICATIONS" = "true" ]; then
+        case "$urgency" in
+            "critical")
+                echo -e "${RED}🚨 $title: $message${NC}"
+                ;;
+            "normal")
+                echo -e "${GREEN}🔔 $title: $message${NC}"
+                ;;
+            *)
+                echo -e "${BLUE}ℹ️  $title: $message${NC}"
+                ;;
+        esac
     fi
 }
 
@@ -354,13 +365,22 @@ Le traitement est en cours..."
 test_notifications() {
     echo -e "${YELLOW}🧪 Test des notifications...${NC}"
     
+    # Test notification console
+    if [ "$ENABLE_CONSOLE_NOTIFICATIONS" = "true" ]; then
+        echo -n "Test notification console... "
+        echo -e "${GREEN}🔔 Test console: Notifications Plex fonctionnelles${NC}"
+        echo -e "${GREEN}✅ Console OK${NC}"
+    else
+        echo -e "${BLUE}ℹ️ Notifications console désactivées${NC}"
+    fi
+    
     # Test notification desktop
     if [ "$ENABLE_DESKTOP_NOTIFICATIONS" = "true" ]; then
         echo -n "Test notification desktop... "
         if send_desktop_notification "🧪 Test Plex" "Test de notification desktop" "normal" "audio-card"; then
             echo -e "${GREEN}✅ Desktop OK${NC}"
         else
-            echo -e "${RED}❌ Desktop KO (affichage console)${NC}"
+            echo -e "${RED}❌ Desktop KO${NC}"
         fi
     else
         echo -e "${BLUE}ℹ️ Notifications desktop désactivées${NC}"
@@ -390,6 +410,7 @@ test_notifications() {
     
     # Résumé
     echo -e "${BLUE}📋 Résumé des notifications actives:${NC}"
+    echo "   Console: $([ "$ENABLE_CONSOLE_NOTIFICATIONS" = "true" ] && echo "Activé" || echo "Désactivé")"
     echo "   Desktop: $([ "$ENABLE_DESKTOP_NOTIFICATIONS" = "true" ] && echo "Activé" || echo "Désactivé")"
     echo "   Email: $([ "$ENABLE_EMAIL_NOTIFICATIONS" = "true" ] && echo "Activé" || echo "Désactivé")"
     echo "   Sonore: Activé (fallback disponible)"
@@ -462,6 +483,71 @@ diagnose_notifications() {
     echo "   • Si email ne fonctionne pas: configurez un serveur SMTP ou utilisez mail/sendmail"
     echo "   • Pour les serveurs headless: utilisez uniquement les notifications email"
     echo "   • Testez avec: ./plex_notifications.sh test"
+}
+
+# Configuration interactive
+configure_notifications() {
+    echo -e "${BLUE}🔧 Configuration des notifications${NC}"
+    echo ""
+    
+    # Diagnostiquer l'environnement
+    echo -e "${YELLOW}🔍 Diagnostic de l'environnement:${NC}"
+    echo "   DISPLAY: ${DISPLAY:-'Non défini'}"
+    echo "   notify-send: $(command -v notify-send &> /dev/null && echo "Disponible" || echo "Non disponible")"
+    echo "   mail: $(command -v mail &> /dev/null && echo "Disponible" || echo "Non disponible")"
+    echo ""
+    
+    # Console notifications (toujours recommandé)
+    echo -n "Activer les notifications console colorées? (Y/n): "
+    read -r enable_console
+    if [[ $enable_console =~ ^[Nn]$ ]]; then
+        ENABLE_CONSOLE_NOTIFICATIONS=false
+    else
+        ENABLE_CONSOLE_NOTIFICATIONS=true
+    fi
+    
+    # Desktop notifications
+    echo -n "Activer les notifications desktop? (y/N): "
+    read -r enable_desktop
+    if [[ $enable_desktop =~ ^[Yy]$ ]]; then
+        ENABLE_DESKTOP_NOTIFICATIONS=true
+    else
+        ENABLE_DESKTOP_NOTIFICATIONS=false
+    fi
+    
+    # Email notifications
+    echo -n "Activer les notifications email? (Y/n): "
+    read -r enable_email
+    if [[ $enable_email =~ ^[Yy]$ ]]; then
+        ENABLE_EMAIL_NOTIFICATIONS=true
+        echo -n "Adresse email destinataire: "
+        read -r EMAIL_RECIPIENT
+    else
+        ENABLE_EMAIL_NOTIFICATIONS=false
+        EMAIL_RECIPIENT=""
+    fi
+    
+    # Sauvegarder la configuration
+    cat > "$NOTIFICATION_CONFIG" << EOF
+# Configuration des notifications Plex
+ENABLE_DESKTOP_NOTIFICATIONS=$ENABLE_DESKTOP_NOTIFICATIONS
+ENABLE_EMAIL_NOTIFICATIONS=$ENABLE_EMAIL_NOTIFICATIONS
+ENABLE_CONSOLE_NOTIFICATIONS=$ENABLE_CONSOLE_NOTIFICATIONS
+EMAIL_RECIPIENT="$EMAIL_RECIPIENT"
+SMTP_SERVER="$SMTP_SERVER"
+NOTIFICATION_LEVEL="info"
+LOG_NOTIFICATIONS=true
+EOF
+    
+    echo -e "${GREEN}✅ Configuration sauvegardée dans: $NOTIFICATION_CONFIG${NC}"
+    
+    # Test
+    echo -n "Tester les notifications? (Y/n): "
+    read -r test_now
+    if [[ ! $test_now =~ ^[Nn]$ ]]; then
+        load_config
+        test_notifications
+    fi
 }
 
 # Fonction principale
