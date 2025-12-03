@@ -74,8 +74,17 @@ fi
 echo ""
 echo "📦 Installation des dépendances Python..."
 if [ -f "requirements.txt" ]; then
-    pip3 install -r requirements.txt
-    echo "✅ Dépendances Python installées"
+    # Essayer d'abord avec --break-system-packages pour les systèmes qui l'exigent
+    if pip3 install --break-system-packages -r requirements.txt 2>/dev/null; then
+        echo "✅ Dépendances Python installées (avec --break-system-packages)"
+    elif pip3 install -r requirements.txt 2>/dev/null; then
+        echo "✅ Dépendances Python installées"
+    else
+        echo "⚠️ Installation des dépendances optionnelle échouée"
+        echo "💡 Les dépendances de base Python sont déjà incluses dans Python 3.8+"
+        echo "💡 Si vous avez des erreurs, installez manuellement avec:"
+        echo "   pip3 install --break-system-packages -r requirements.txt"
+    fi
 else
     echo "⚠️ Fichier requirements.txt non trouvé"
 fi
