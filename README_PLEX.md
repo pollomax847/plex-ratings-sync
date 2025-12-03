@@ -2,6 +2,46 @@
 
 Script Python pour synchroniser les évaluations Plex avec le système de fichiers audio.
 
+## 🚀 Installation Rapide
+
+### Option 1: Installation automatique (recommandée)
+
+```bash
+# Téléchargez le repo
+git clone https://github.com/pollomax847/plex-ratings-sync.git
+cd plex-ratings-sync
+
+# Lancez l'installation automatique
+./install.sh
+```
+
+### Option 2: Installation manuelle
+
+```bash
+# 1. Prérequis système
+sudo apt update && sudo apt install python3 python3-pip  # Ubuntu/Debian
+# ou
+brew install python3  # macOS
+
+# 2. Installation des dépendances
+pip3 install songrec
+pip3 install -r requirements.txt
+
+# 3. Rendre les scripts exécutables
+chmod +x plex_notifications.sh
+```
+
+## ✅ Vérification de l'installation
+
+```bash
+# Test rapide
+python3 plex_ratings_sync.py --help
+
+# Vérification des dépendances
+songrec --version
+python3 -c "import sqlite3, pathlib, subprocess; print('✅ Toutes les dépendances OK')"
+```
+
 ## Fonctionnalités
 
 - **Suppression automatique** : Supprime les fichiers notés 1⭐ dans Plex
@@ -12,26 +52,30 @@ Script Python pour synchroniser les évaluations Plex avec le système de fichie
 - **Notifications** : Envoie des notifications desktop/email
 - **Mode simulation** : Teste sans supprimer réellement
 
-## Installation
+## 🎯 Premiers Pas
 
-1. **Prérequis** :
+### 1. Test de fonctionnement
 
-   ```bash
-   # Installer Python 3.8+
-   sudo apt install python3 python3-pip
+```bash
+# Mode simulation (recommandé pour commencer)
+python3 plex_ratings_sync.py --auto-find-db
+```
 
-   # Installer songrec (pour l'identification audio)
-   pip install songrec
+### 2. Voir les statistiques
 
-   # Installer les dépendances
-   pip install -r requirements.txt
-   ```
+```bash
+# Afficher la répartition des ratings dans Plex
+python3 plex_ratings_sync.py --auto-find-db --stats
+```
 
-2. **Configuration** :
-   - Le script trouve automatiquement la base Plex
-   - Ou spécifiez manuellement : `--plex-db /chemin/vers/com.plexapp.plugins.library.db`
+### 3. Suppression réelle (avec précaution)
 
-## Utilisation
+```bash
+# Supprimer les fichiers 1⭐ avec sauvegarde
+python3 plex_ratings_sync.py --auto-find-db --delete --backup ./sauvegarde_securisee
+```
+
+## Utilisation Avancée
 
 ### Mode simulation (recommandé d'abord)
 
