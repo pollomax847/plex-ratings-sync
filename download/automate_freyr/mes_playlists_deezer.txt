@@ -1,0 +1,17 @@
+# Mes playlists Deezer à surveiller
+# Une URL par ligne, les lignes commençant par # sont ignorées
+
+# Playlist principale
+https://www.deezer.com/fr/playlist/1995808222
+https://www.deezer.com/fr/playlist/751764391
+https://www.deezer.com/fr/playlist/1018534021
+https://www.deezer.com/fr/playlist/13909861601
+https://www.deezer.com/fr/playlist/13342499103
+https://www.deezer.com/fr/playlist/53362031
+https://www.deezer.com/fr/playlist/1154685481
+https://www.deezer.com/fr/playlist/687945565
+https://www.deezer.com/fr/playlist/1363560485
+https://www.deezer.com/fr/playlist/1203212111
+https://www.deezer.com/fr/playlist/751764391
+https://www.deezer.com/fr/playlist/1290316405
+https://www.deezer.com/fr/playlist/12134756071
