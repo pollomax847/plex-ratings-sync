@@ -262,6 +262,8 @@ if [ "$COUNT_1_STAR" -gt 0 ]; then
         --auto-find-db \
         --rating 2 \
         --delete \
+        --delete-albums \
+        --delete-artists \
         --backup "$MONTHLY_BACKUP/deleted_1_star" \
         --verbose >> "$LOG_FILE" 2>&1
     
