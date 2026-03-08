@@ -111,7 +111,7 @@ import sqlite3
 import json
 
 # Chemin direct vers la base Plex snap
-plex_db = '/var/snap/plexmediaserver/common/Library/Application Support/Plex Media Server/Plug-in Support/Databases/com.plexapp.plugins.library.db'
+plex_db = '$PLEX_DB'
 
 try:
     conn = sqlite3.connect(plex_db)
@@ -160,11 +160,11 @@ try:
                 'artist_name': artist_name or 'Unknown Artist'
             }
             
-            if final_rating == 1.0:
+            if final_rating == 2.0:  # 2.0 = 1⭐ affiché → à supprimer
                 files_1_star.append(file_info)
-            elif final_rating == 2.0:
+            elif final_rating == 4.0:  # 4.0 = 2⭐ affichés → à scanner
                 files_2_star.append(file_info)
-            elif final_rating in [3.0, 4.0, 5.0]:
+            elif final_rating in [3.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]:  # 3-5⭐ → à synchroniser
                 files_sync_rating.append(file_info)
 
     # Sauvegarder les listes
