@@ -4,7 +4,7 @@
 # Utilisation: ./clear_ratings_from_files.sh [rating_number] [music_base_dir]
 
 SCRIPT_DIR="$(dirname "$0")"
-LOG_DIR="$HOME/logs/plex_ratings"
+LOG_DIR="$HOME/.plex/logs/plex_ratings"
 mkdir -p "$LOG_DIR"
 
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")

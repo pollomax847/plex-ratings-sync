@@ -5,7 +5,7 @@
 # Configuration
 SCRIPT_DIR="$(dirname "$0")"
 CONFIG_FILE="$HOME/.plex_ratings_sync.conf"
-LOG_DIR="$HOME/logs/plex_ratings"
+LOG_DIR="$HOME/.plex/logs/plex_ratings"
 NOTIFICATION_EMAIL=""  # Optionnel : votre email pour les notifications
 
 # Créer le répertoire de logs

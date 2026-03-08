@@ -3,8 +3,8 @@
 # Garde seulement les logs des 30 derniers jours
 
 SCRIPT_DIR="$(dirname "$0")"
-LOG_DIR="$HOME/logs/plex_ratings"
-DAILY_LOG_DIR="$HOME/logs/plex_daily"
+LOG_DIR="$HOME/.plex/logs/plex_ratings"
+DAILY_LOG_DIR="$HOME/.plex/logs/plex_daily"
 BACKUP_DIR="$HOME/plex_backup"
 
 # Couleurs

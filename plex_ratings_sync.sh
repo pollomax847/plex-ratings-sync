@@ -4,11 +4,19 @@
 # Compatible avec Rhythmbox, VLC, et autres lecteurs
 
 SCRIPT_DIR="$(dirname "$0")"
-LOG_DIR="$HOME/logs/plex_ratings"
+LOG_DIR="$HOME/.plex/logs/plex_ratings"
 mkdir -p "$LOG_DIR"
 
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 LOG_FILE="$LOG_DIR/ratings_sync_$TIMESTAMP.log"
+
+# Charger le système de notifications générique
+if [[ -f "$SCRIPT_DIR/audio_notifications.sh" ]]; then
+    source "$SCRIPT_DIR/audio_notifications.sh"
+    export NOTIFICATION_APP_NAME="Plex Ratings Sync"
+    export NOTIFICATION_ENABLE_CONSOLE=true
+    export NOTIFICATION_ENABLE_DESKTOP=false  # Désactiver par défaut pour éviter les interruptions
+fi
 
 # Paramètres
 DIRECTION=${1:-both}  # plex-to-files, files-to-plex, both
@@ -43,6 +51,9 @@ fi
 
 if [ -z "$PLEX_DB" ] || [ ! -f "$PLEX_DB" ]; then
     log "${RED}❌ Base de données Plex non trouvée${NC}"
+    if command -v notify_error >/dev/null 2>&1; then
+        notify_error "Database Not Found" "Plex database could not be located"
+    fi
     exit 1
 fi
 
@@ -216,6 +227,9 @@ case $DIRECTION in
         ;;
     *)
         log "${RED}❌ Direction invalide. Utilisez: plex-to-files, files-to-plex, ou both${NC}"
+        if command -v notify_error >/dev/null 2>&1; then
+            notify_error "Invalid Direction" "Use: plex-to-files, files-to-plex, or both"
+        fi
         exit 1
         ;;
 esac
@@ -223,3 +237,8 @@ esac
 log ""
 log "${GREEN}✅ Synchronisation terminée${NC}"
 log "${BLUE}📁 Logs: $LOG_FILE${NC}"
+
+# Notification de résumé complet
+if command -v notify_summary >/dev/null 2>&1; then
+    notify_summary "Plex Ratings Sync" "completed" "" "0" "0" "0" "0" "0"
+fi

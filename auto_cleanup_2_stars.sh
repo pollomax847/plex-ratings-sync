@@ -5,7 +5,7 @@
 # 3. Enlever automatiquement les ratings 2 étoiles
 
 SCRIPT_DIR="$(dirname "$0")"
-LOG_DIR="$HOME/logs/plex_ratings"
+LOG_DIR="$HOME/.plex/logs/plex_ratings"
 SONGREC_QUEUE_DIR="$HOME/songrec_queue"
 mkdir -p "$LOG_DIR"
 

@@ -7,9 +7,17 @@
 # Configuration
 SCRIPT_DIR="$(dirname "$0")"
 AUDIO_LIBRARY="/home/paulceline/Musiques"
-LOG_DIR="$HOME/logs/plex_daily"
+LOG_DIR="$HOME/.plex/logs/plex_daily"
 BACKUP_DIR="$HOME/plex_backup"
 SONGREC_QUEUE_DIR="$HOME/songrec_queue"
+
+# Charger le système de notifications (configuration simple)
+if [[ -f "$SCRIPT_DIR/audio_notifications.sh" ]]; then
+    source "$SCRIPT_DIR/audio_notifications.sh"
+    export NOTIFICATION_APP_NAME="Plex Daily Workflow"
+    export NOTIFICATION_ENABLE_DESKTOP=true
+    export NOTIFICATION_ENABLE_CONSOLE=true
+fi
 
 # Couleurs pour les logs
 RED='\033[0;31m'
@@ -675,10 +683,15 @@ WORKFLOW_DURATION=$((WORKFLOW_END_TIME - WORKFLOW_START_TIME))
 DURATION_FORMATTED=$(printf "%02d:%02d:%02d" $((WORKFLOW_DURATION/3600)) $((WORKFLOW_DURATION%3600/60)) $((WORKFLOW_DURATION%60)))
 
 # Notification finale de résumé complet
+if command -v notify_summary >/dev/null 2>&1; then
+    notify_summary "Monthly Workflow" "completed" "$DURATION_FORMATTED" "${COUNT_1_STAR:-0}" "${COUNT_2_STAR:-0}" "${TOTAL_SONGREC_ERRORS:-0}" "${COUNT_SYNC_RATING:-0}" "${TOTAL_RATINGS_ERRORS:-0}"
+fi
+
+# Garder l'ancien système comme fallback
 "$SCRIPT_DIR/plex_notifications.sh" workflow_completed \
     "$TOTAL_DELETED" "$TOTAL_SONGREC_PROCESSED" "$TOTAL_SONGREC_ERRORS" \
     "$TOTAL_RATINGS_SYNCED" "$TOTAL_RATINGS_ERRORS" \
-    "${ALBUMS_1_STAR:-0}" "${ALBUMS_2_STAR:-0}" "$DURATION_FORMATTED"
+    "${ALBUMS_1_STAR:-0}" "${ALBUMS_2_STAR:-0}" "$DURATION_FORMATTED" 2>/dev/null || true
 
 log ""
 log "${BLUE}✨ Votre bibliothèque est maintenant synchronisée !${NC}"
