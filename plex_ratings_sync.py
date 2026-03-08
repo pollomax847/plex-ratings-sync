@@ -660,8 +660,8 @@ class PlexRatingsSync:
             return {'success': True, 'deleted_files': 0, 'message': 'Aucun fichier à traiter'}
         
         # Séparer les fichiers par rating
-        one_star_files = self.filter_files_by_rating(all_rated_files, 1.0)
-        two_star_files = self.filter_files_by_rating(all_rated_files, 2.0)
+        one_star_files = self.filter_files_by_rating(all_rated_files, 2.0)  # 2.0 = 1⭐ affiché
+        two_star_files = self.filter_files_by_rating(all_rated_files, 4.0)  # 4.0 = 2⭐ affichés
         
         # Traiter les fichiers 2 étoiles avec songrec (toujours, pas de suppression)
         songrec_results = {'processed': 0, 'identified': 0, 'errors': 0, 'file_details': []}
@@ -1108,10 +1108,10 @@ Exemples:
     # Avec sauvegarde avant suppression
     python3 plex_ratings_sync.py --auto-find-db --backup ./backup
 
-    # Supprimer également les albums avec 1 étoile
+    # Supprimer également les albums avec le rating cible
     python3 plex_ratings_sync.py --auto-find-db --delete --delete-albums
 
-    # Supprimer également les artistes avec 1 étoile
+    # Supprimer également les artistes avec le rating cible
     python3 plex_ratings_sync.py --auto-find-db --delete --delete-artists
 
     # Supprimer les albums avec 2 étoiles
