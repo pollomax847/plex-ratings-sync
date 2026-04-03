@@ -8,7 +8,6 @@
 SCRIPT_DIR="$(dirname "$0")"
 AUDIO_LIBRARY="/home/paulceline/Musiques"
 LOG_DIR="$HOME/.plex/logs/plex_daily"
-BACKUP_DIR="$HOME/plex_backup"
 SONGREC_QUEUE_DIR="$HOME/songrec_queue"
 
 # Charger le système de notifications (configuration simple)
@@ -27,7 +26,7 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 # Créer les répertoires nécessaires
-mkdir -p "$LOG_DIR" "$BACKUP_DIR" "$SONGREC_QUEUE_DIR"
+mkdir -p "$LOG_DIR" "$SONGREC_QUEUE_DIR"
 
 # Fichiers de log avec horodatage
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
@@ -83,10 +82,7 @@ fi
 
 log "${GREEN}✅ Prérequis OK${NC}"
 
-# Créer un répertoire de sauvegarde mensuel
-MONTHLY_BACKUP="$BACKUP_DIR/monthly_$(date +%Y%m)"
-mkdir -p "$MONTHLY_BACKUP"
-log "💾 Sauvegarde mensuelle: $MONTHLY_BACKUP"
+log "💾 Sauvegarde automatique des suppressions: désactivée"
 
 # ================================================================
 # ÉTAPE 1: ANALYSER LES RATINGS ACTUELS
@@ -265,14 +261,13 @@ if [ "$COUNT_1_STAR" -gt 0 ]; then
     
     log "⚠️ Suppression de $COUNT_1_STAR fichiers avec 1 étoile..."
     
-    # Lancer la suppression avec sauvegarde
+    # Lancer la suppression sans sauvegarde
     python3 "$SCRIPT_DIR/plex_ratings_sync.py" \
         --auto-find-db \
         --rating 2 \
         --delete \
         --delete-albums \
         --delete-artists \
-        --backup "$MONTHLY_BACKUP/deleted_1_star" \
         --verbose >> "$LOG_FILE" 2>&1
     
     if [ $? -eq 0 ]; then
@@ -591,9 +586,7 @@ else
     log "🧹 Anciens logs nettoyés (>6 mois)"
 fi
 
-# Nettoyage des anciennes sauvegardes (garder 3 mois)
-find "$BACKUP_DIR" -name "monthly_*" -type d -mtime +90 -exec rm -rf {} + 2>/dev/null || true
-log "🧹 Anciennes sauvegardes nettoyées (>3 mois)"
+# Aucun nettoyage de sauvegardes: la suppression se fait sans backup.
 
 # Optionnel: Déclencher un scan de bibliothèque Plex après modifications
 # Décommentez si vous avez configuré l'API Plex
@@ -609,7 +602,7 @@ log "============================="
 END_TIME=$(date '+%Y-%m-%d %H:%M:%S')
 log "🕒 Fin: $END_TIME"
 log "📁 Log complet: $LOG_FILE"
-log "💾 Sauvegardes: $MONTHLY_BACKUP"
+log "💾 Sauvegardes: désactivées"
 
 if [ "$COUNT_2_STAR" -gt 0 ]; then
     log "🔍 Queue songrec: $SESSION_QUEUE"
@@ -635,7 +628,7 @@ if [ -n "${NOTIFICATION_EMAIL:-}" ] && command -v mail &> /dev/null; then
         echo "• Fichiers scannés songrec (2⭐): $COUNT_2_STAR"
         echo
         echo "SAUVEGARDES:"
-        echo "• Répertoire: $MONTHLY_BACKUP"
+        echo "• Désactivées"
         echo
         if [ "$COUNT_2_STAR" -gt 0 ] && [ -n "${SESSION_QUEUE:-}" ]; then
             echo "SONGREC-RENAME:"
@@ -666,7 +659,7 @@ cat > "$SUMMARY_FILE" << EOF
   "files_deleted_1_star": $COUNT_1_STAR,
   "files_processed_2_star": $COUNT_2_STAR,
   "ratings_sync_errors": ${SYNC_RATING_ERRORS:-0},
-  "backup_directory": "$MONTHLY_BACKUP",
+  "backup_directory": null,
   "log_file": "$LOG_FILE",
   "songrec_auto_processed": $([ -f "$SESSION_QUEUE/songrec_processing.log" ] && grep -c "✅ Succès:" "$SESSION_QUEUE/songrec_processing.log" 2>/dev/null || echo "0"),
   "songrec_auto_errors": $([ -f "$SESSION_QUEUE/songrec_processing.log" ] && grep -c "❌ Échec:" "$SESSION_QUEUE/songrec_processing.log" 2>/dev/null || echo "0"),

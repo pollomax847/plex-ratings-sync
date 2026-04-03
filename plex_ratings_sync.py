@@ -8,13 +8,13 @@ Fonctionnalités:
 - Extraction des ratings des fichiers audio
 - Suppression sécurisée des fichiers avec 1 étoile
 - Mode simulation/dry-run par défaut
-- Sauvegarde optionnelle avant suppression
+- Sauvegarde uniquement si demandée explicitement
 - Logs détaillés de toutes les opérations
 
 Usage:
     python3 plex_ratings_sync.py --plex-db /path/to/plex/database
     python3 plex_ratings_sync.py --plex-db /path/to/plex/database --delete
-    python3 plex_ratings_sync.py --plex-db /path/to/plex/database --delete --backup
+    python3 plex_ratings_sync.py --plex-db /path/to/plex/database --delete --backup ./backup
 """
 
 import os
@@ -41,7 +41,7 @@ class PlexRatingsSync:
         # Configuration par défaut
         default_config = {
             'target_rating': 1,  # Étoiles à supprimer (1-5)
-            'backup_dir': None,  # Sera défini dynamiquement
+            'backup_dir': None,  # Optionnel, uniquement si demande explicitement
             'audio_extensions': ('.mp3', '.flac', '.m4a', '.ogg', '.wma', '.aac', '.wav'),
             'log_level': 'INFO',
             'verify_file_exists': True,
@@ -356,6 +356,13 @@ class PlexRatingsSync:
         filtered = [a for a in rated_artists if a['rating'] == target_rating]
         self.logger.info(f"🎤 Trouvé {len(filtered)} artistes avec {target_rating} étoile(s)")
         return filtered
+
+    def filter_artists_by_name(self, rated_artists: List[Dict], artist_name: str) -> List[Dict]:
+        """Filtre les artistes selon leur nom exact, sans tenir compte de la casse"""
+        normalized_artist_name = artist_name.casefold().strip()
+        filtered = [a for a in rated_artists if a['artist_name'].casefold().strip() == normalized_artist_name]
+        self.logger.info(f"🎯 Filtre artiste '{artist_name}': {len(filtered)} correspondance(s)")
+        return filtered
     
     def verify_file_exists(self, file_path: str) -> bool:
         """Vérifie que le fichier existe sur le système"""
@@ -635,7 +642,7 @@ class PlexRatingsSync:
             'file_details': file_details
         }
     
-    def sync_ratings(self, dry_run: bool = None, backup_dir: Optional[str] = None, delete_albums: bool = False, delete_artists: bool = False) -> Dict:
+    def sync_ratings(self, dry_run: bool = None, backup_dir: Optional[str] = None, delete_albums: bool = False, delete_artists: bool = False, artist_name_filter: Optional[str] = None) -> Dict:
         """Synchronise les ratings Plex avec le système de fichiers
         
         Logique:
@@ -652,16 +659,18 @@ class PlexRatingsSync:
         # Vérifier la base Plex
         if not self.verify_plex_database():
             return {'success': False, 'error': 'Base de données Plex inaccessible'}
-        
+
+        process_track_ratings = not artist_name_filter
+
         # Extraire les fichiers avec ratings
-        all_rated_files = self.get_rated_audio_files()
-        if not all_rated_files:
+        all_rated_files = self.get_rated_audio_files() if process_track_ratings else []
+        if not all_rated_files and process_track_ratings and not delete_albums and not delete_artists:
             self.logger.warning("Aucun fichier avec rating trouvé dans Plex")
             return {'success': True, 'deleted_files': 0, 'message': 'Aucun fichier à traiter'}
-        
+
         # Séparer les fichiers par rating
-        one_star_files = self.filter_files_by_rating(all_rated_files, 2.0)  # 2.0 = 1⭐ affiché
-        two_star_files = self.filter_files_by_rating(all_rated_files, 4.0)  # 4.0 = 2⭐ affichés
+        one_star_files = self.filter_files_by_rating(all_rated_files, 2.0) if process_track_ratings else []  # 2.0 = 1⭐ affiché
+        two_star_files = self.filter_files_by_rating(all_rated_files, 4.0) if process_track_ratings else []  # 4.0 = 2⭐ affichés
         
         # En mode simulation, ne pas lancer songrec pour garder une verification rapide.
         songrec_results = {'processed': 0, 'identified': 0, 'errors': 0, 'file_details': []}
@@ -745,6 +754,8 @@ class PlexRatingsSync:
         if delete_artists:
             all_rated_artists = self.get_rated_artists()
             target_artists = self.filter_artists_by_rating(all_rated_artists, self.config['target_rating'])
+            if artist_name_filter:
+                target_artists = self.filter_artists_by_name(target_artists, artist_name_filter)
             
             self.logger.info(f"🎤 Trouvé {len(target_artists)} artistes {self.config['target_rating']}⭐ à supprimer")
             
@@ -794,10 +805,12 @@ class PlexRatingsSync:
         
         # Nettoyer la base de données Plex
         cleaned_plex_entries = 0
-        if not dry_run and deleted_count > 0:
+        if not dry_run and deleted_count > 0 and self.config.get('cleanup_plex_database', True):
             self.logger.info("🗃️ Nettoyage de la base de données Plex...")
             cleaned_plex_entries = self.cleanup_plex_database(self.deleted_files)
             self.cleaned_plex_entries = cleaned_plex_entries  # Stocker pour le rapport
+        elif not dry_run and deleted_count > 0:
+            self.logger.info("🗃️ Nettoyage de la base Plex ignore (configuration active)")
         
         # Résumé
         result = {
@@ -1182,12 +1195,30 @@ Exemples:
         action='store_true',
         help='Supprime également les artistes avec le rating cible'
     )
+
+    parser.add_argument(
+        '--artist-name',
+        type=str,
+        help='Nom exact de l\'artiste a cibler avec --delete-artists'
+    )
     
     parser.add_argument(
         '--cleanup-logs',
         type=int,
         metavar='DAYS',
         help='Supprime les logs plus anciens que X jours (0 = tous les logs)'
+    )
+
+    parser.add_argument(
+        '--skip-plex-stop',
+        action='store_true',
+        help='N\'arrete pas Plex et travaille a partir d\'une copie de la base'
+    )
+
+    parser.add_argument(
+        '--skip-db-cleanup',
+        action='store_true',
+        help='Ignore le nettoyage SQL de la base Plex apres suppression'
     )
     
     return parser.parse_args()
@@ -1196,10 +1227,14 @@ def main():
     """Fonction principale"""
     args = parse_arguments()
 
+    if args.artist_name and not args.delete_artists:
+        print("❌ --artist-name doit etre utilise avec --delete-artists")
+        sys.exit(1)
+
     # Déterminer le chemin de la base Plex
     plex_db_path = args.plex_db
     dry_run_mode = args.dry_run if args.dry_run else (not args.delete if args.delete else False)
-    use_temp_db = dry_run_mode or args.stats or args.cleanup_logs is not None
+    use_temp_db = dry_run_mode or args.stats or args.cleanup_logs is not None or args.skip_plex_stop
     temp_db = None
     plex_stopped = False
     
@@ -1223,14 +1258,19 @@ def main():
         plex_stopped = True
         import time
         time.sleep(5)  # Attendre que Plex se ferme complètement
+
+    if args.skip_plex_stop and not dry_run_mode:
+        print("⚠️ Mode sans arret Plex: suppression des fichiers a partir d'une copie de la base")
+        print("⚠️ Le nettoyage SQL Plex sera ignore; un scan Plex pourra etre necessaire ensuite")
     
     # Configuration
-    backup_dir = args.backup if args.backup else f"./backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    backup_dir = args.backup
     config = {
         'target_rating': args.rating,
         'backup_dir': backup_dir,
         'log_level': 'DEBUG' if args.verbose else 'INFO',
-        'dry_run': dry_run_mode
+        'dry_run': dry_run_mode,
+        'cleanup_plex_database': not (args.skip_db_cleanup or use_temp_db)
     }
     
     # Initialiser le synchroniseur
@@ -1263,8 +1303,11 @@ def main():
                 print(f"💿 Les albums avec {args.rating} étoile(s) seront également supprimés")
             if args.delete_artists:
                 print(f"🎤 Les artistes avec {args.rating} étoile(s) seront également supprimés")
-            print(f"💾 Sauvegarde automatique activée: {config['backup_dir']}")
-            print("📁 Les fichiers supprimés seront sauvegardés avant suppression")
+            if config['backup_dir']:
+                print(f"💾 Sauvegarde activée: {config['backup_dir']}")
+                print("📁 Les fichiers supprimés seront sauvegardés avant suppression")
+            else:
+                print("💾 Sauvegarde: désactivée")
             
             print("🚀 Démarrage de la suppression...")
         
@@ -1273,7 +1316,8 @@ def main():
             dry_run=None,  # Utilise la configuration
             backup_dir=args.backup,
             delete_albums=args.delete_albums,
-            delete_artists=args.delete_artists
+            delete_artists=args.delete_artists,
+            artist_name_filter=args.artist_name
         )
         
         # Sauvegarder le rapport si des suppressions ont eu lieu

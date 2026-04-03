@@ -1,5 +1,6 @@
 {
     "chat.tools.terminal.autoApprove": {
-        "command": true
+        "command": true,
+        "/home/paulceline/scripts/.venv/bin/python": true
     }
 }

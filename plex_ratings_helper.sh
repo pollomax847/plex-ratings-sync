@@ -75,21 +75,13 @@ simulate() {
 # Mode suppression réelle
 delete_real() {
     local rating=${1:-1}
-    local backup_dir="$HOME/plex_backup_$(date +%Y%m%d_%H%M%S)"
     
     echo -e "${RED}⚠️  MODE SUPPRESSION RÉELLE${NC}"
     echo "Rating cible: $rating étoile(s)"
-    echo "Sauvegarde: $backup_dir"
+    echo "Sauvegarde: désactivée"
     echo
     
-    read -p "Créer une sauvegarde avant suppression ? (O/n): " create_backup
-    
-    if [[ "$create_backup" =~ ^[Nn]$ ]]; then
-        python3 "$sync_script" --auto-find-db --rating "$rating" --delete
-    else
-        echo "💾 Sauvegarde activée: $backup_dir"
-        python3 "$sync_script" --auto-find-db --rating "$rating" --delete --backup "$backup_dir"
-    fi
+    python3 "$sync_script" --auto-find-db --rating "$rating" --delete
 }
 
 # Configuration interactive
