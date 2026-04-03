@@ -174,7 +174,7 @@ class PlexRatingsSync:
                 FROM metadata_items mi
                 LEFT JOIN metadata_items parent_mi ON mi.parent_id = parent_mi.id
                 LEFT JOIN metadata_item_settings mis ON mi.guid = mis.guid
-                WHERE mi.metadata_type = 2  -- Type 2 = Album
+                WHERE mi.metadata_type = 9  -- Type 9 = Album
                 AND mis.rating IS NOT NULL
                 ORDER BY mis.rating, parent_mi.title, mi.title
                 """
@@ -221,7 +221,7 @@ class PlexRatingsSync:
                     mi.id as artist_id
                 FROM metadata_items mi
                 LEFT JOIN metadata_item_settings mis ON mi.guid = mis.guid
-                WHERE mi.metadata_type = 3  -- Type 3 = Artist
+                WHERE mi.metadata_type = 8  -- Type 8 = Artist
                 AND mis.rating IS NOT NULL
                 ORDER BY mis.rating, mi.title
                 """
@@ -273,7 +273,7 @@ class PlexRatingsSync:
                 WHERE mi.metadata_type = 10  -- Tracks
                 AND parent_mi.id = ?
                 AND mp.file IS NOT NULL
-                ORDER BY mi.index
+                ORDER BY mi."index"
                 """
                 
                 cursor.execute(query, (album_id,))
@@ -317,7 +317,7 @@ class PlexRatingsSync:
                 WHERE mi.metadata_type = 10  -- Tracks
                 AND grandparent_mi.id = ?
                 AND mp.file IS NOT NULL
-                ORDER BY parent_mi.title, mi.index
+                ORDER BY parent_mi.title, mi."index"
                 """
                 
                 cursor.execute(query, (artist_id,))
@@ -663,9 +663,9 @@ class PlexRatingsSync:
         one_star_files = self.filter_files_by_rating(all_rated_files, 2.0)  # 2.0 = 1⭐ affiché
         two_star_files = self.filter_files_by_rating(all_rated_files, 4.0)  # 4.0 = 2⭐ affichés
         
-        # Traiter les fichiers 2 étoiles avec songrec (toujours, pas de suppression)
+        # En mode simulation, ne pas lancer songrec pour garder une verification rapide.
         songrec_results = {'processed': 0, 'identified': 0, 'errors': 0, 'file_details': []}
-        if two_star_files:
+        if two_star_files and not dry_run:
             songrec_results = self.process_two_star_files(two_star_files)
             
             # Envoyer une notification pour le traitement songrec
@@ -1108,11 +1108,11 @@ Exemples:
     # Avec sauvegarde avant suppression
     python3 plex_ratings_sync.py --auto-find-db --backup ./backup
 
-    # Supprimer également les albums avec le rating cible
-    python3 plex_ratings_sync.py --auto-find-db --delete --delete-albums
+    # Supprimer également les albums avec le rating cible stocke par Plex
+    python3 plex_ratings_sync.py --auto-find-db --delete --delete-albums --rating 2
 
-    # Supprimer également les artistes avec le rating cible
-    python3 plex_ratings_sync.py --auto-find-db --delete --delete-artists
+    # Supprimer également les artistes avec le rating cible stocke par Plex
+    python3 plex_ratings_sync.py --auto-find-db --delete --delete-artists --rating 2
 
     # Supprimer les albums avec 2 étoiles
     python3 plex_ratings_sync.py --auto-find-db --delete --delete-albums --rating 2
@@ -1144,7 +1144,7 @@ Exemples:
         '--rating', '--target-rating',
         type=float,
         default=1.0,
-        help='Rating cible pour albums/artistes (1-5 étoiles, défaut: 1). Les pistes 1⭐ sont toujours supprimées, 2⭐ toujours scannées.'
+        help='Rating cible stocke par Plex pour albums/artistes (defaut: 1.0). Utiliser 2 pour les elements affiches a 1⭐. Les pistes 1⭐ sont toujours supprimees, 2⭐ toujours scannees.'
     )
     
     parser.add_argument(
@@ -1195,14 +1195,13 @@ Exemples:
 def main():
     """Fonction principale"""
     args = parse_arguments()
-    
-    # Arrêter Plex pour éviter les conflits de DB
-    subprocess.run(["sudo", "snap", "stop", "plexmediaserver"], check=True, capture_output=True)
-    import time
-    time.sleep(5)  # Attendre que Plex se ferme complètement
-    
+
     # Déterminer le chemin de la base Plex
     plex_db_path = args.plex_db
+    dry_run_mode = args.dry_run if args.dry_run else (not args.delete if args.delete else False)
+    use_temp_db = dry_run_mode or args.stats or args.cleanup_logs is not None
+    temp_db = None
+    plex_stopped = False
     
     if args.auto_find_db or not plex_db_path:
         auto_path = find_plex_database()
@@ -1212,13 +1211,18 @@ def main():
         elif not plex_db_path:
             print("❌ Base de données Plex introuvable automatiquement.")
             print("Utilisez --plex-db pour spécifier le chemin manuellement.")
-            subprocess.run(["sudo", "snap", "start", "plexmediaserver"], check=True, capture_output=True)
             sys.exit(1)
-    
-    # Copier la DB
-    temp_db = tempfile.mktemp(suffix='.db')
-    shutil.copy2(plex_db_path, temp_db)
-    plex_db_path = temp_db
+
+    if use_temp_db:
+        temp_db = tempfile.mktemp(suffix='.db')
+        shutil.copy2(plex_db_path, temp_db)
+        plex_db_path = temp_db
+    else:
+        # Travailler sur la DB reelle pour que le nettoyage Plex soit persistant.
+        subprocess.run(["sudo", "snap", "stop", "plexmediaserver"], check=True, capture_output=True)
+        plex_stopped = True
+        import time
+        time.sleep(5)  # Attendre que Plex se ferme complètement
     
     # Configuration
     backup_dir = args.backup if args.backup else f"./backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -1226,7 +1230,7 @@ def main():
         'target_rating': args.rating,
         'backup_dir': backup_dir,
         'log_level': 'DEBUG' if args.verbose else 'INFO',
-        'dry_run': args.dry_run if args.dry_run else (not args.delete if args.delete else False)
+        'dry_run': dry_run_mode
     }
     
     # Initialiser le synchroniseur
@@ -1278,20 +1282,22 @@ def main():
         
         if not result['success']:
             print(f"❌ Erreur: {result.get('error', 'Erreur inconnue')}")
-            os.remove(temp_db)
-            subprocess.run(["sudo", "snap", "start", "plexmediaserver"], check=True, capture_output=True)
             sys.exit(1)
         
     except KeyboardInterrupt:
         print("\n⏹️ Opération interrompue par l'utilisateur")
-        os.remove(temp_db)
-        subprocess.run(["sudo", "snap", "start", "plexmediaserver"], check=True, capture_output=True)
         sys.exit(1)
     except Exception as e:
         print(f"❌ Erreur inattendue: {e}")
-        os.remove(temp_db)
-        subprocess.run(["sudo", "snap", "start", "plexmediaserver"], check=True, capture_output=True)
         sys.exit(1)
+    finally:
+        if temp_db and os.path.exists(temp_db):
+            os.remove(temp_db)
+        if plex_stopped:
+            try:
+                subprocess.run(["sudo", "snap", "start", "plexmediaserver"], check=True, capture_output=True)
+            except Exception as e:
+                print(f"⚠️ Impossible de redemarrer Plex automatiquement: {e}")
 
 if __name__ == "__main__":
     main()
