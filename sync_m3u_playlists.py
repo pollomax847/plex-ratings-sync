@@ -36,10 +36,17 @@ class M3UPlaylistSync:
         )
         self.logger = logging.getLogger(__name__)
 
+    def _connect_db(self):
+        """Crée une connexion DB avec collation icu_root et text_factory."""
+        conn = sqlite3.connect(str(self.plex_db_path))
+        conn.create_collation('icu_root', lambda a, b: (a > b) - (a < b))
+        conn.text_factory = lambda b: b.decode('utf-8', errors='replace')
+        return conn
+
     def get_smart_playlists_from_ratings(self) -> List[Dict]:
         """Crée des playlists intelligentes basées sur les ratings"""
         try:
-            with sqlite3.connect(str(self.plex_db_path)) as conn:
+            with self._connect_db() as conn:
                 cursor = conn.cursor()
                 
                 # Requête pour obtenir les fichiers par rating
@@ -198,7 +205,7 @@ class M3UPlaylistSync:
     def find_file_in_plex_db(self, track_title: str, artist_name: str = None, album_title: str = None) -> Optional[str]:
         """Recherche un fichier dans la base de données Plex basé sur le titre et les métadonnées"""
         try:
-            with sqlite3.connect(str(self.plex_db_path)) as conn:
+            with self._connect_db() as conn:
                 cursor = conn.cursor()
                 
                 # Construire la requête de recherche
@@ -384,10 +391,10 @@ def main():
                         default='/var/snap/plexmediaserver/common/Library/Application Support/Plex Media Server/Plug-in Support/Databases/com.plexapp.plugins.library.db',
                         help='Chemin vers la base de données Plex')
     parser.add_argument('--m3u-dir', 
-                        default='~/Music/Playlists',
+                        default='/mnt/ssd/Musiques/Playlists',
                         help='Répertoire des fichiers M3U')
     parser.add_argument('--music-library', 
-                        default='/mnt/mybook/itunes/Music',
+                        default='/mnt/ssd/Musiques',
                         help='Chemin vers la bibliothèque musicale')
     parser.add_argument('--export', 
                         action='store_true',

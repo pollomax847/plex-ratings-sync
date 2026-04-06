@@ -74,27 +74,23 @@ PLEX_DB = "/var/snap/plexmediaserver/common/Library/Application Support/Plex Med
 
 try:
     with sqlite3.connect(PLEX_DB) as conn:
+        conn.create_collation('icu_root', lambda a, b: (a > b) - (a < b))
         cursor = conn.cursor()
         
-        # Trouver les playlists automatiques (avec préfixes spéciaux)
-        prefixes = ['⭐', '🕰️', '🆕', '🎵', '🔥', '❤️', '🔍', '🧘', '⚡', '🎤']
+        # Trouver les playlists automatiques (préfixe [Auto])
+        cursor.execute("""
+            SELECT id, title FROM metadata_items 
+            WHERE metadata_type = 15 AND title LIKE '[Auto] %'
+        """)
         
+        playlists = cursor.fetchall()
         deleted_count = 0
-        for prefix in prefixes:
-            cursor.execute("""
-                SELECT id, title FROM metadata_items 
-                WHERE metadata_type = 15 AND title LIKE ?
-            """, (f'{prefix}%',))
-            
-            playlists = cursor.fetchall()
-            
-            for playlist_id, title in playlists:
-                # Supprimer les éléments de playlist
-                cursor.execute("DELETE FROM playlist_items WHERE playlist_id = ?", (playlist_id,))
-                # Supprimer la playlist
-                cursor.execute("DELETE FROM metadata_items WHERE id = ?", (playlist_id,))
-                print(f"🗑️ Supprimée: {title}")
-                deleted_count += 1
+        
+        for playlist_id, title in playlists:
+            cursor.execute("DELETE FROM play_queue_generators WHERE playlist_id = ?", (playlist_id,))
+            cursor.execute("DELETE FROM metadata_items WHERE id = ?", (playlist_id,))
+            print(f"🗑️ Supprimée: {title}")
+            deleted_count += 1
         
         conn.commit()
         print(f"✅ {deleted_count} anciennes playlists supprimées")

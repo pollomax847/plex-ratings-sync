@@ -87,6 +87,12 @@ class PlexPlaylistManager:
     def __init__(self, plex_db_path: str):
         self.plex_db_path = Path(plex_db_path)
     
+    def _connect_db(self):
+        conn = sqlite3.connect(str(self.plex_db_path))
+        conn.create_collation('icu_root', lambda a, b: (a > b) - (a < b))
+        conn.text_factory = lambda b: b.decode('utf-8', errors='replace')
+        return conn
+    
     def _clean_string(self, s: str) -> str:
         """Nettoie un string pour le matching"""
         if not s:
@@ -102,7 +108,7 @@ class PlexPlaylistManager:
     def find_track_in_plex(self, title: str, artist: str = "") -> Optional[int]:
         """Cherche une chanson dans Plex"""
         try:
-            with sqlite3.connect(str(self.plex_db_path)) as conn:
+            with self._connect_db() as conn:
                 cursor = conn.cursor()
                 
                 clean_title = self._clean_string(title)
@@ -127,20 +133,32 @@ class PlexPlaylistManager:
     def create_plex_playlist(self, playlist_name: str, tracks: List[Dict]) -> int:
         """Crée une playlist Plex"""
         try:
-            with sqlite3.connect(str(self.plex_db_path)) as conn:
+            with self._connect_db() as conn:
                 cursor = conn.cursor()
+                
+                now = int(time.time())
+                
+                # Supprimer la playlist si elle existe déjà
+                cursor.execute("""
+                    SELECT id FROM metadata_items
+                    WHERE title = ? AND metadata_type = 15
+                """, (playlist_name,))
+                existing = cursor.fetchone()
+                if existing:
+                    cursor.execute("DELETE FROM play_queue_generators WHERE playlist_id = ?", (existing[0],))
+                    cursor.execute("DELETE FROM metadata_items WHERE id = ?", (existing[0],))
                 
                 cursor.execute("""
                     INSERT INTO metadata_items (
                         library_section_id, metadata_type, guid, title, 
-                        added_at, updated_at
+                        created_at, updated_at
                     ) VALUES (?, ?, ?, ?, ?, ?)
                 """, (
-                    3, 18,
-                    f"com.plexapp.agents.localmedia://playlist/{int(time.time())}",
+                    1, 15,
+                    f"com.plexapp.agents.localmedia://playlist/{now}",
                     playlist_name,
-                    int(time.time()),
-                    int(time.time())
+                    now,
+                    now
                 ))
                 
                 playlist_id = cursor.lastrowid
@@ -155,9 +173,11 @@ class PlexPlaylistManager:
                     
                     if track_id:
                         cursor.execute("""
-                            INSERT INTO playlist_items (playlist_id, metadata_item_id, "order")
-                            VALUES (?, ?, ?)
-                        """, (playlist_id, track_id, matched))
+                            INSERT INTO play_queue_generators (
+                                playlist_id, metadata_item_id, "order",
+                                created_at, updated_at
+                            ) VALUES (?, ?, ?, ?, ?)
+                        """, (playlist_id, track_id, float(matched), now, now))
                         matched += 1
                         if (idx + 1) % 10 == 0:
                             logger.info(f"  {matched}/{idx+1} chansons matchées...")
