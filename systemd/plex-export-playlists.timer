@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Plex playlist export every evening at 22h
+
+[Timer]
+OnCalendar=*-*-* 22:00:00
+Persistent=true
+Unit=plex-export-playlists.service
+
+[Install]
+WantedBy=timers.target

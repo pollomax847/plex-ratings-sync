@@ -1,0 +1,8 @@
+[Unit]
+Description=Export all Plex playlists to MyBook as compilations
+
+[Service]
+Type=oneshot
+Nice=15
+IOSchedulingClass=idle
+ExecStart=/usr/bin/python3 /home/paulceline/scripts/export_plex_playlist.py --all --dest /mnt/MyBook/itunes/Music --go --ytdlp
