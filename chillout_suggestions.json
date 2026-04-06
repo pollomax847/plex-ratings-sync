@@ -1,0 +1,113 @@
+{
+  "playlist": {
+    "id": 1340145,
+    "title": "Chilout Relaxation MAssage",
+    "media_item_count": 2,
+    "account_id": 1,
+    "created_at": 1775062138,
+    "updated_at": 1775147986
+  },
+  "seed_tracks": [
+    {
+      "metadata_item_id": 1164304,
+      "title": "Relief Action",
+      "artist": "Ian Pooley",
+      "album": "Meridian",
+      "rating": 8.0,
+      "play_count": 1,
+      "last_viewed_at": 1775062126
+    },
+    {
+      "metadata_item_id": 1196254,
+      "title": "Expressing Feelings",
+      "artist": "Various Artists",
+      "album": "After Workout - 200 Lounge & Chillout Songs",
+      "rating": 6.0,
+      "play_count": 2,
+      "last_viewed_at": 1775069364
+    }
+  ],
+  "suggestions": [
+    {
+      "metadata_item_id": 1196256,
+      "title": "Vino Joven",
+      "artist": "Various Artists",
+      "album": "After Workout - 200 Lounge & Chillout Songs",
+      "rating": null,
+      "play_count": 1,
+      "last_viewed_at": 1775069718
+    },
+    {
+      "metadata_item_id": 1196257,
+      "title": "Mystical Thoughts",
+      "artist": "Various Artists",
+      "album": "After Workout - 200 Lounge & Chillout Songs",
+      "rating": null,
+      "play_count": 1,
+      "last_viewed_at": 1775070066
+    },
+    {
+      "metadata_item_id": 1196259,
+      "title": "Lovely Shelters",
+      "artist": "Various Artists",
+      "album": "After Workout - 200 Lounge & Chillout Songs",
+      "rating": null,
+      "play_count": 1,
+      "last_viewed_at": 1775070817
+    },
+    {
+      "metadata_item_id": 1196255,
+      "title": "Directional Shadows",
+      "artist": "Various Artists",
+      "album": "After Workout - 200 Lounge & Chillout Songs",
+      "rating": null,
+      "play_count": 1,
+      "last_viewed_at": 1775107222
+    },
+    {
+      "metadata_item_id": 1196260,
+      "title": "Amusing",
+      "artist": "Various Artists",
+      "album": "After Workout - 200 Lounge & Chillout Songs",
+      "rating": null,
+      "play_count": 1,
+      "last_viewed_at": 1775069042
+    },
+    {
+      "metadata_item_id": 1164305,
+      "title": "Ganz Gag",
+      "artist": "Ian Pooley",
+      "album": "Meridian",
+      "rating": null,
+      "play_count": 1,
+      "last_viewed_at": 1773493001
+    },
+    {
+      "metadata_item_id": 1164303,
+      "title": "Intro",
+      "artist": "Ian Pooley",
+      "album": "Meridian",
+      "rating": null,
+      "play_count": 0,
+      "last_viewed_at": null
+    },
+    {
+      "metadata_item_id": 1155100,
+      "title": "Elektro (The Cube Guys ‘Delano’ remix)",
+      "artist": "Various Artists",
+      "album": "Hed Kandi: Twisted Disco 02.07",
+      "rating": 8.0,
+      "play_count": 1,
+      "last_viewed_at": 1774870760
+    },
+    {
+      "metadata_item_id": 1224349,
+      "title": "Never Never",
+      "artist": "Drenchill",
+      "album": "Never Never (feat. Indiiana) - Single",
+      "rating": 8.0,
+      "play_count": 2,
+      "last_viewed_at": 1774448701
+    }
+  ]
+}

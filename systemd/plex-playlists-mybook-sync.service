@@ -1,0 +1,6 @@
+[Unit]
+Description=Sync Plex playlists to MyBook export directory
+
+[Service]
+Type=oneshot
+ExecStart=/home/paulceline/scripts/sync_plex_playlists_to_mybook.sh

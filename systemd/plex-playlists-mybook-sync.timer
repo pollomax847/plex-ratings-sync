@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Plex playlist export to MyBook every 15 days
+
+[Timer]
+OnBootSec=10m
+OnUnitActiveSec=15d
+Persistent=true
+Unit=plex-playlists-mybook-sync.service
+
+[Install]
+WantedBy=timers.target

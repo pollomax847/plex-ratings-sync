@@ -1,6 +1,15 @@
 {
     "chat.tools.terminal.autoApprove": {
         "command": true,
-        "/home/paulceline/scripts/.venv/bin/python": true
+        "/home/paulceline/scripts/.venv/bin/python": true,
+        "/usr/bin/time": true,
+        "/^source /home/paulceline/scripts/\\.venv/bin/activate && python3 - <<'EOF'\nimport sqlite3, shutil, tempfile\nfrom pathlib import Path\n\nDB = Path\\(\"/var/snap/plexmediaserver/common/Library/Application Support/Plex Media Server/Plug-in Support/Databases/com\\.plexapp\\.plugins\\.library\\.db\"\\)\ntmp = Path\\(tempfile\\.mktemp\\(suffix=\"\\.db\"\\)\\)\nshutil\\.copy2\\(DB, tmp\\)\n\nconn = sqlite3\\.connect\\(str\\(tmp\\), uri=True\\)\nconn\\.execute\\(\"PRAGMA query_only = ON\"\\)\n\n# Toutes les playlists audio\nrows = conn\\.execute\\(\"SELECT id, title, COALESCE\\(media_item_count,0\\) FROM metadata_items WHERE metadata_type=15 ORDER BY LOWER\\(title\\)\"\\)\\.fetchall\\(\\)\n\n# Tracks par playlist\nempty = \\[\\]\nfor r in rows:\n    pid, title, count = r\n    n = conn\\.execute\\(\"SELECT COUNT\\(\\*\\) FROM play_queue_generators WHERE playlist_id=\\?\", \\(pid,\\)\\)\\.fetchone\\(\\)\\[0\\]\n    if n == 0:\n        empty\\.append\\(\\(title, count\\)\\)\n\nprint\\(f\"Total playlists: \\{len\\(rows\\)\\}\"\\)\nprint\\(f\"Playlists WITHOUT tracks in play_queue_generators: \\{len\\(empty\\)\\}\"\\)\nfor t, c in empty:\n    print\\(f\"  - '\\{t\\}' \\(media_item_count=\\{c\\}\\)\"\\)\n\nconn\\.close\\(\\)\ntmp\\.unlink\\(\\)\nEOF$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^source /home/paulceline/scripts/\\.venv/bin/activate && python3 - <<'EOF'\nimport sqlite3, shutil, tempfile\nfrom pathlib import Path\n\nDB = Path\\(\"/var/snap/plexmediaserver/common/Library/Application Support/Plex Media Server/Plug-in Support/Databases/com\\.plexapp\\.plugins\\.library\\.db\"\\)\ntmp = Path\\(tempfile\\.mktemp\\(suffix=\"\\.db\"\\)\\)\nshutil\\.copy2\\(DB, tmp\\)\nconn = sqlite3\\.connect\\(str\\(tmp\\)\\); conn\\.execute\\(\"PRAGMA query_only = ON\"\\)\n\nrows = conn\\.execute\\(\"SELECT id, title FROM metadata_items WHERE metadata_type=15 ORDER BY LOWER\\(title\\)\"\\)\\.fetchall\\(\\)\n\nskipped = \\[\\]\nfor pid, title in rows:\n    tracks = conn\\.execute\\(\"\"\"\n        SELECT mp\\.file\n        FROM play_queue_generators pqg\n        JOIN metadata_items track ON pqg\\.metadata_item_id = track\\.id\n        JOIN media_items media ON media\\.metadata_item_id = track\\.id\n        JOIN media_parts mp ON mp\\.media_item_id = media\\.id\n        WHERE pqg\\.playlist_id = \\? AND pqg\\.metadata_item_id IS NOT NULL AND track\\.metadata_type = 10\n    \"\"\", \\(pid,\\)\\)\\.fetchall\\(\\)\n    \n    with_path = \\[t for t in tracks if t\\[0\\]\\]\n    if not with_path:\n        skipped\\.append\\(\\(title, len\\(tracks\\)\\)\\)\n\nprint\\(f\"Playlists avec 0 pistes exportables: \\{len\\(skipped\\)\\}\"\\)\nfor t, n in skipped:\n    print\\(f\"  - '\\{t\\}' \\(\\{n\\} pistes dans DB, 0 avec fichier\\)\"\\)\n\nconn\\.close\\(\\); tmp\\.unlink\\(\\)\nEOF$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
     }
 }
