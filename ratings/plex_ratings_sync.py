@@ -504,7 +504,7 @@ class PlexRatingsSync:
                             # Envoyer une notification individuelle pour ce fichier
                             try:
                                 script_dir = Path(__file__).parent
-                                notifications_script = script_dir / 'plex_notifications.sh'
+                                notifications_script = script_dir.parent / 'notifications' / 'plex_notifications.sh'
                                 
                                 if notifications_script.exists():
                                     subprocess.run([
@@ -532,7 +532,7 @@ class PlexRatingsSync:
                             # Notification pour fichier non identifié
                             try:
                                 script_dir = Path(__file__).parent
-                                notifications_script = script_dir / 'plex_notifications.sh'
+                                notifications_script = script_dir.parent / 'notifications' / 'plex_notifications.sh'
                                 
                                 if notifications_script.exists():
                                     subprocess.run([
@@ -554,7 +554,7 @@ class PlexRatingsSync:
                         # Notification d'erreur
                         try:
                             script_dir = Path(__file__).parent
-                            notifications_script = script_dir / 'plex_notifications.sh'
+                            notifications_script = script_dir.parent / 'notifications' / 'plex_notifications.sh'
                             
                             if notifications_script.exists():
                                 subprocess.run([
@@ -576,7 +576,7 @@ class PlexRatingsSync:
                     # Notification d'erreur
                     try:
                         script_dir = Path(__file__).parent
-                        notifications_script = script_dir / 'plex_notifications.sh'
+                        notifications_script = script_dir.parent / 'notifications' / 'plex_notifications.sh'
                         
                         if notifications_script.exists():
                             subprocess.run([
@@ -598,7 +598,7 @@ class PlexRatingsSync:
                 # Notification d'erreur
                 try:
                     script_dir = Path(__file__).parent
-                    notifications_script = script_dir / 'plex_notifications.sh'
+                    notifications_script = script_dir.parent / 'notifications' / 'plex_notifications.sh'
                     
                     if notifications_script.exists():
                         subprocess.run([
@@ -620,7 +620,7 @@ class PlexRatingsSync:
                 # Notification d'erreur
                 try:
                     script_dir = Path(__file__).parent
-                    notifications_script = script_dir / 'plex_notifications.sh'
+                    notifications_script = script_dir.parent / 'notifications' / 'plex_notifications.sh'
                     
                     if notifications_script.exists():
                         subprocess.run([
@@ -681,7 +681,7 @@ class PlexRatingsSync:
             if songrec_results['processed'] > 0:
                 try:
                     script_dir = Path(__file__).parent
-                    notifications_script = script_dir / 'plex_notifications.sh'
+                    notifications_script = script_dir.parent / 'notifications' / 'plex_notifications.sh'
                     
                     if notifications_script.exists():
                         # Calculer le nombre d'albums traités (approximation)
@@ -779,7 +779,7 @@ class PlexRatingsSync:
         if not dry_run and (deleted_count > 0 or deleted_albums > 0 or deleted_artists > 0):
             try:
                 script_dir = Path(__file__).parent
-                notifications_script = script_dir / 'plex_notifications.sh'
+                notifications_script = script_dir.parent / 'notifications' / 'plex_notifications.sh'
                 
                 if notifications_script.exists():
                     # Créer un résumé des suppressions

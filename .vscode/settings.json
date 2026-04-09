@@ -10,6 +10,10 @@
         "/^source /home/paulceline/scripts/\\.venv/bin/activate && python3 - <<'EOF'\nimport sqlite3, shutil, tempfile\nfrom pathlib import Path\n\nDB = Path\\(\"/var/snap/plexmediaserver/common/Library/Application Support/Plex Media Server/Plug-in Support/Databases/com\\.plexapp\\.plugins\\.library\\.db\"\\)\ntmp = Path\\(tempfile\\.mktemp\\(suffix=\"\\.db\"\\)\\)\nshutil\\.copy2\\(DB, tmp\\)\nconn = sqlite3\\.connect\\(str\\(tmp\\)\\); conn\\.execute\\(\"PRAGMA query_only = ON\"\\)\n\nrows = conn\\.execute\\(\"SELECT id, title FROM metadata_items WHERE metadata_type=15 ORDER BY LOWER\\(title\\)\"\\)\\.fetchall\\(\\)\n\nskipped = \\[\\]\nfor pid, title in rows:\n    tracks = conn\\.execute\\(\"\"\"\n        SELECT mp\\.file\n        FROM play_queue_generators pqg\n        JOIN metadata_items track ON pqg\\.metadata_item_id = track\\.id\n        JOIN media_items media ON media\\.metadata_item_id = track\\.id\n        JOIN media_parts mp ON mp\\.media_item_id = media\\.id\n        WHERE pqg\\.playlist_id = \\? AND pqg\\.metadata_item_id IS NOT NULL AND track\\.metadata_type = 10\n    \"\"\", \\(pid,\\)\\)\\.fetchall\\(\\)\n    \n    with_path = \\[t for t in tracks if t\\[0\\]\\]\n    if not with_path:\n        skipped\\.append\\(\\(title, len\\(tracks\\)\\)\\)\n\nprint\\(f\"Playlists avec 0 pistes exportables: \\{len\\(skipped\\)\\}\"\\)\nfor t, n in skipped:\n    print\\(f\"  - '\\{t\\}' \\(\\{n\\} pistes dans DB, 0 avec fichier\\)\"\\)\n\nconn\\.close\\(\\); tmp\\.unlink\\(\\)\nEOF$/": {
             "approve": true,
             "matchCommandLine": true
+        },
+        "/^mkdir -p ratings playlists itunes notifications audio workflows diagnostics maintenance utils data$/": {
+            "approve": true,
+            "matchCommandLine": true
         }
     }
 }

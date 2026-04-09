@@ -209,14 +209,30 @@ Exemples :
     elif args.playlist:
         to_export = []
         for name in args.playlist:
+            # Match exact d'abord
             matched = [p for p in playlists if p["title"].lower() == name.lower()]
             if not matched:
-                # Recherche partielle
+                # Recherche partielle, mais demander confirmation si plusieurs résultats
                 matched = [p for p in playlists if name.lower() in p["title"].lower()]
+                if len(matched) > 1:
+                    print(f"⚠ '{name}' correspond à {len(matched)} playlists :")
+                    for j, m in enumerate(matched, 1):
+                        print(f"  {j}. {m['title']} ({m['leaf_count']} pistes)")
+                    try:
+                        choice = input("Numéro(s) à exporter (ex: 1,3) ou 'all' ou Entrée pour annuler : ").strip()
+                    except (EOFError, KeyboardInterrupt):
+                        choice = ""
+                    if choice.lower() == "all":
+                        pass  # garder tous les matched
+                    elif choice:
+                        indices = [int(x.strip()) - 1 for x in choice.split(",") if x.strip().isdigit()]
+                        matched = [matched[i] for i in indices if 0 <= i < len(matched)]
+                    else:
+                        matched = []
             if matched:
                 to_export.extend(matched)
             else:
-                print(f"⚠ Playlist non trouvée : '{name}'")
+                print(f"⚠ Playlist non trouvée ou ignorée : '{name}'")
         if not to_export:
             sys.exit(1)
     else:

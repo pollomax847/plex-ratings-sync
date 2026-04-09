@@ -4,7 +4,8 @@
 # 2. Vérifier que les fichiers 2 étoiles ont été renommés
 # 3. Enlever automatiquement les ratings 2 étoiles
 
-SCRIPT_DIR="$(dirname "$0")"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+BASE_DIR="$(dirname "$SCRIPT_DIR")"
 LOG_DIR="$HOME/.plex/logs/plex_ratings"
 SONGREC_QUEUE_DIR="$HOME/songrec_queue"
 mkdir -p "$LOG_DIR"
@@ -126,21 +127,21 @@ for QUEUE_NAME in $QUEUES; do
     log "${BLUE}  🔄 Enlèvement des ratings 2 étoiles...${NC}"
     
     # Vérifier que le script existe
-    if [ ! -f "$SCRIPT_DIR/clear_ratings_from_files.sh" ]; then
+    if [ ! -f "$BASE_DIR/ratings/clear_ratings_from_files.sh" ]; then
         log "${RED}  ❌ Script clear_ratings_from_files.sh non trouvé${NC}"
         TOTAL_FAILED=$((TOTAL_FAILED + 1))
         continue
     fi
     
     # Exécuter le script de suppression des ratings
-    OUTPUT=$(sudo $SCRIPT_DIR/clear_ratings_from_files.sh 2 2>&1)
+    OUTPUT=$(sudo $BASE_DIR/ratings/clear_ratings_from_files.sh 2 2>&1)
     RESULT=$?
     
     if [ $RESULT -eq 0 ]; then
         log "${GREEN}  ✅ Ratings 2 étoiles enlevés avec succès${NC}"
         
         # Supprimer aussi les ratings 1 étoile
-        OUTPUT1=$(sudo $SCRIPT_DIR/clear_ratings_from_files.sh 1 2>&1)
+        OUTPUT1=$(sudo $BASE_DIR/ratings/clear_ratings_from_files.sh 1 2>&1)
         RESULT1=$?
         if [ $RESULT1 -eq 0 ]; then
             log "${GREEN}  ✅ Ratings 1 étoile enlevés avec succès${NC}"

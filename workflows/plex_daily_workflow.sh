@@ -5,14 +5,15 @@
 # Exécution automatique : quotidiennement à 02h00
 
 # Configuration
-SCRIPT_DIR="$(dirname "$0")"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+BASE_DIR="$(dirname "$SCRIPT_DIR")"
 AUDIO_LIBRARY="/home/paulceline/Musiques"
 LOG_DIR="$HOME/.plex/logs/plex_daily"
 SONGREC_QUEUE_DIR="$HOME/songrec_queue"
 
 # Charger le système de notifications (configuration simple)
-if [[ -f "$SCRIPT_DIR/audio_notifications.sh" ]]; then
-    source "$SCRIPT_DIR/audio_notifications.sh"
+if [[ -f "$BASE_DIR/notifications/audio_notifications.sh" ]]; then
+    source "$BASE_DIR/notifications/audio_notifications.sh"
     export NOTIFICATION_APP_NAME="Plex Daily Workflow"
     export NOTIFICATION_ENABLE_DESKTOP=true
     export NOTIFICATION_ENABLE_CONSOLE=true
@@ -62,7 +63,7 @@ if [ ! -d "$AUDIO_LIBRARY" ]; then
 fi
 
 # Vérifier l'accès à la base Plex
-PLEX_DB=$(python3 "$SCRIPT_DIR/plex_ratings_sync.py" --auto-find-db --stats 2>/dev/null | grep -o '/.*\.db' | head -1 || echo "")
+PLEX_DB=$(python3 "$BASE_DIR/ratings/plex_ratings_sync.py" --auto-find-db --stats 2>/dev/null | grep -o '/.*\.db' | head -1 || echo "")
 if [ -z "$PLEX_DB" ]; then
     log "${RED}❌ ERREUR: Base de données Plex introuvable${NC}"
     exit 1
@@ -92,7 +93,7 @@ log "${BLUE}📊 ÉTAPE 1: Analyse des ratings actuels${NC}"
 log "========================================"
 
 # Obtenir les statistiques détaillées
-python3 "$SCRIPT_DIR/plex_ratings_sync.py" --auto-find-db --stats >> "$LOG_FILE" 2>&1
+python3 "$BASE_DIR/ratings/plex_ratings_sync.py" --auto-find-db --stats >> "$LOG_FILE" 2>&1
 
 # Extraire les fichiers par rating pour traitement (albums ET pistes)
 log "🔍 Extraction des ratings d'albums et de pistes..."
@@ -103,7 +104,7 @@ mkdir -p "$TEMP_DIR"
 
 # NOUVELLE APPROCHE: Utiliser le gestionnaire d'albums pour une analyse complète
 log "📀 Analyse des albums avec ratings..."
-python3 "$SCRIPT_DIR/../utils/album_ratings_manager.py" "$PLEX_DB" "$TEMP_DIR" >> "$LOG_FILE" 2>&1
+python3 "$BASE_DIR/../utils/album_ratings_manager.py" "$PLEX_DB" "$TEMP_DIR" >> "$LOG_FILE" 2>&1
 
 # Vérifier que l'analyse a réussi
 if [ ! -f "$TEMP_DIR/ratings_stats.json" ]; then
@@ -215,7 +216,7 @@ if [ -f "$TEMP_DIR/ratings_stats.json" ]; then
     log "   🎵 Pistes seules 2⭐: $FILES_FROM_TRACKS_2_STAR"
     
     # Notification de démarrage
-    "$SCRIPT_DIR/plex_notifications.sh" workflow_started \
+    "$BASE_DIR/notifications/plex_notifications.sh" workflow_started \
         "$COUNT_1_STAR" "$COUNT_2_STAR" "$COUNT_SYNC_RATING" \
         "$ALBUMS_1_STAR" "$ALBUMS_2_STAR"
     
@@ -240,7 +241,7 @@ else
     ALBUMS_2_STAR=0
     
     # Notification de démarrage (mode fallback)
-    "$SCRIPT_DIR/plex_notifications.sh" workflow_started \
+    "$BASE_DIR/notifications/plex_notifications.sh" workflow_started \
         "$COUNT_1_STAR" "$COUNT_2_STAR" "$COUNT_SYNC_RATING" \
         "$ALBUMS_1_STAR" "$ALBUMS_2_STAR"
 
@@ -262,7 +263,7 @@ if [ "$COUNT_1_STAR" -gt 0 ]; then
     log "⚠️ Suppression de $COUNT_1_STAR fichiers avec 1 étoile..."
     
     # Lancer la suppression sans sauvegarde
-    python3 "$SCRIPT_DIR/plex_ratings_sync.py" \
+    python3 "$BASE_DIR/ratings/plex_ratings_sync.py" \
         --auto-find-db \
         --rating 2 \
         --delete \
@@ -275,10 +276,10 @@ if [ "$COUNT_1_STAR" -gt 0 ]; then
         TOTAL_DELETED=$COUNT_1_STAR
         
         # Notification suppression
-        "$SCRIPT_DIR/plex_notifications.sh" files_deleted "$COUNT_1_STAR" "Albums: ${ALBUMS_1_STAR:-0}"
+        "$BASE_DIR/notifications/plex_notifications.sh" files_deleted "$COUNT_1_STAR" "Albums: ${ALBUMS_1_STAR:-0}"
     else
         log "${RED}❌ Erreur lors de la suppression${NC}"
-        "$SCRIPT_DIR/plex_notifications.sh" critical_error "Suppression" "Échec de la suppression des fichiers 1 étoile"
+        "$BASE_DIR/notifications/plex_notifications.sh" critical_error "Suppression" "Échec de la suppression des fichiers 1 étoile"
     fi
 else
     log ""
@@ -293,7 +294,7 @@ fi
 # log "=================================================="
 
 # # Vérifier et corriger les problèmes d'encodage avant songrec
-# ENCODING_SCRIPT="$SCRIPT_DIR/find_encoding_problems.sh"
+# ENCODING_SCRIPT="$BASE_DIR/audio/find_encoding_problems.sh"
 # if [ -x "$ENCODING_SCRIPT" ]; then
 #     log "🔍 Recherche des problèmes d'encodage..."
 #     
@@ -302,7 +303,7 @@ fi
 #         log "${YELLOW}⚠️  Problèmes d'encodage détectés${NC}"
 #         
 #         # Correction automatique
-#         FIX_SCRIPT="$SCRIPT_DIR/fix_encoding_issues.sh"
+#         FIX_SCRIPT="$BASE_DIR/audio/fix_encoding_issues.sh"
 #         if [ -x "$FIX_SCRIPT" ]; then
 #             log "${BLUE}🔧 Correction automatique en cours...${NC}"
 #             "$FIX_SCRIPT" "$MUSIC_ROOT" fix
@@ -403,7 +404,7 @@ EOF
     
     # Détecter les problèmes d'encodage dans la bibliothèque
     ENCODING_REPORT="$SESSION_QUEUE/encoding_issues.txt"
-    if "$SCRIPT_DIR/detect_encoding_problems.sh" "$AUDIO_LIBRARY" detect "$ENCODING_REPORT" >> "$LOG_FILE" 2>&1; then
+    if "$BASE_DIR/audio/detect_encoding_problems.sh" "$AUDIO_LIBRARY" detect "$ENCODING_REPORT" >> "$LOG_FILE" 2>&1; then
         log "${GREEN}✅ Aucun problème d'encodage détecté${NC}"
     else
         log "${YELLOW}⚠️ Problèmes d'encodage détectés${NC}"
@@ -411,7 +412,7 @@ EOF
         
         # Proposer la correction automatique
         log "${BLUE}🔧 Correction automatique des problèmes d'encodage...${NC}"
-        if "$SCRIPT_DIR/fix_encoding_issues.sh" "$AUDIO_LIBRARY" fix >> "$LOG_FILE" 2>&1; then
+        if "$BASE_DIR/audio/fix_encoding_issues.sh" "$AUDIO_LIBRARY" fix >> "$LOG_FILE" 2>&1; then
             log "${GREEN}✅ Correction d'encodage réussie${NC}"
         else
             log "${RED}❌ Échec de la correction d'encodage${NC}"
@@ -451,7 +452,7 @@ EOF
                 log "Les fichiers ont été traités avec songrec-rename, suppression des ratings 2⭐..."
                 
                 # Appeler le script de nettoyage des ratings 2 étoiles (avec réorganisation pour Lidarr)
-                if "$SCRIPT_DIR/clear_ratings_from_files.sh" 2 "$AUDIO_LIBRARY" >> "$LOG_FILE" 2>&1; then
+                if "$BASE_DIR/ratings/clear_ratings_from_files.sh" 2 "$AUDIO_LIBRARY" >> "$LOG_FILE" 2>&1; then
                     log "${GREEN}✅ Ratings 2 étoiles supprimés et fichiers réorganisés pour Lidarr${NC}"
                     log "   Les fichiers traités n'ont plus de ratings 2⭐ dans Plex"
                     log "   Structure: Artist/Album/01 - Title.mp3"
@@ -462,7 +463,7 @@ EOF
             fi
             
             # Notification songrec
-            "$SCRIPT_DIR/plex_notifications.sh" songrec_completed \
+            "$BASE_DIR/notifications/plex_notifications.sh" songrec_completed \
                 "$processed_count" "$error_count" \
                 "${ALBUMS_2_STAR:-0}" "${FILES_FROM_TRACKS_2_STAR:-0}"
         else
@@ -471,7 +472,7 @@ EOF
             TOTAL_SONGREC_ERRORS=$COUNT_2_STAR
             
             # Notification d'erreur songrec
-            "$SCRIPT_DIR/plex_notifications.sh" critical_error "Songrec" "Échec du traitement songrec-rename"
+            "$BASE_DIR/notifications/plex_notifications.sh" critical_error "Songrec" "Échec du traitement songrec-rename"
         fi
     else
         log "${YELLOW}⚠️ songrec-rename non installé${NC}"
@@ -479,7 +480,7 @@ EOF
         log "   Les fichiers 2 ⭐ restent en queue pour traitement ultérieur"
         
         # Notification songrec non installé
-        "$SCRIPT_DIR/plex_notifications.sh" critical_error "Songrec" "songrec-rename non installé"
+        "$BASE_DIR/notifications/plex_notifications.sh" critical_error "Songrec" "songrec-rename non installé"
     fi
     
 else
@@ -494,10 +495,10 @@ fi
 # log "${BLUE}📊 ÉTAPE 4: Génération du rapport quotidien${NC}"
 # log "=============================================="
 
-# if [ -f "$SCRIPT_DIR/generate_monthly_report.py" ]; then
+# if [ -f "$BASE_DIR/utils/generate_monthly_report.py" ]; then
 #     log "📈 Génération du rapport mensuel..."
 
-#     if python3 "$SCRIPT_DIR/generate_monthly_report.py" >> "$LOG_FILE" 2>&1; then
+#     if python3 "$BASE_DIR/utils/generate_monthly_report.py" >> "$LOG_FILE" 2>&1; then
 #         log "${GREEN}✅ Rapport mensuel généré avec succès${NC}"
 
 #         # Trouver le dernier rapport généré
@@ -506,11 +507,11 @@ fi
 #             log "📄 Rapport: $LATEST_REPORT"
 
 #             # Notification rapport généré
-#             "$SCRIPT_DIR/plex_notifications.sh" monthly_report_generated "$LATEST_REPORT"
+#             "$BASE_DIR/notifications/plex_notifications.sh" monthly_report_generated "$LATEST_REPORT"
 #         fi
 #     else
 #         log "${YELLOW}⚠️ Erreur lors de la génération du rapport mensuel${NC}"
-#         "$SCRIPT_DIR/plex_notifications.sh" minor_error "Rapport mensuel" "Échec de génération"
+#         "$BASE_DIR/notifications/plex_notifications.sh" minor_error "Rapport mensuel" "Échec de génération"
 #     fi
 # else
 #     log "${YELLOW}⚠️ Script de rapport mensuel introuvable${NC}"
@@ -523,10 +524,10 @@ fi
 # log "${BLUE}🔍 ÉTAPE 5: Analyse des doublons${NC}"
 # log "==================================="
 
-# if [ -f "$SCRIPT_DIR/duplicate_detector.py" ]; then
+# if [ -f "$BASE_DIR/utils/duplicate_detector.py" ]; then
 #     log "🔍 Analyse des doublons en cours..."
 
-#     if python3 "$SCRIPT_DIR/duplicate_detector.py" >> "$LOG_FILE" 2>&1; then
+#     if python3 "$BASE_DIR/utils/duplicate_detector.py" >> "$LOG_FILE" 2>&1; then
 #         log "${GREEN}✅ Analyse des doublons terminée${NC}"
 
 #         # Trouver le dernier rapport de doublons
@@ -546,16 +547,16 @@ fi
 #                 log "   📁 Fichiers identiques: $FILE_DUPS groupes"
 
 #                 # Notification analyse doublons
-# #                 "$SCRIPT_DIR/plex_notifications.sh" duplicates_analysis_completed \
+# #                 "$BASE_DIR/notifications/plex_notifications.sh" duplicates_analysis_completed \
 #                     "$EXACT_DUPS" "$SIMILAR_DUPS" "$FILE_DUPS"
 #             else
 #                 # Notification sans statistiques détaillées
-#                 "$SCRIPT_DIR/plex_notifications.sh" duplicates_analysis_completed "N/A" "N/A" "N/A"
+#                 "$BASE_DIR/notifications/plex_notifications.sh" duplicates_analysis_completed "N/A" "N/A" "N/A"
 #             fi
 #         fi
 #     else
 #         log "${YELLOW}⚠️ Erreur lors de l'analyse des doublons${NC}"
-#         "$SCRIPT_DIR/plex_notifications.sh" minor_error "Analyse doublons" "Échec de l'analyse"
+#         "$BASE_DIR/notifications/plex_notifications.sh" minor_error "Analyse doublons" "Échec de l'analyse"
 #     fi
 # else
 #     log "${YELLOW}⚠️ Script d'analyse des doublons introuvable${NC}"
@@ -573,9 +574,9 @@ rm -rf "$TEMP_DIR"
 log "🧹 Fichiers temporaires supprimés"
 
 # Nettoyage automatique des anciens logs
-if [ -x "$SCRIPT_DIR/clean_old_logs.sh" ]; then
+if [ -x "$BASE_DIR/maintenance/clean_old_logs.sh" ]; then
     log "🧹 Nettoyage automatique des anciens logs..."
-    if "$SCRIPT_DIR/clean_old_logs.sh" >> "$LOG_FILE" 2>&1; then
+    if "$BASE_DIR/maintenance/clean_old_logs.sh" >> "$LOG_FILE" 2>&1; then
         log "${GREEN}✅ Anciens logs nettoyés${NC}"
     else
         log "${YELLOW}⚠️ Erreur lors du nettoyage des logs${NC}"
@@ -681,7 +682,7 @@ if command -v notify_summary >/dev/null 2>&1; then
 fi
 
 # Garder l'ancien système comme fallback
-"$SCRIPT_DIR/plex_notifications.sh" workflow_completed \
+"$BASE_DIR/notifications/plex_notifications.sh" workflow_completed \
     "$TOTAL_DELETED" "$TOTAL_SONGREC_PROCESSED" "$TOTAL_SONGREC_ERRORS" \
     "$TOTAL_RATINGS_SYNCED" "$TOTAL_RATINGS_ERRORS" \
     "${ALBUMS_1_STAR:-0}" "${ALBUMS_2_STAR:-0}" "$DURATION_FORMATTED" 2>/dev/null || true

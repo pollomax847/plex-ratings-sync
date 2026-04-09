@@ -3,10 +3,11 @@
 # Montre une seule notification avec toutes les statistiques
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BASE_DIR="$(dirname "$SCRIPT_DIR")"
 
 # Charger le système de notifications
-if [[ -f "$SCRIPT_DIR/audio_notifications.sh" ]]; then
-    source "$SCRIPT_DIR/audio_notifications.sh"
+if [[ -f "$BASE_DIR/notifications/audio_notifications.sh" ]]; then
+    source "$BASE_DIR/notifications/audio_notifications.sh"
     export NOTIFICATION_APP_NAME="Demo - Résumé Complet"
     export NOTIFICATION_ENABLE_DESKTOP=true
     export NOTIFICATION_ENABLE_CONSOLE=true

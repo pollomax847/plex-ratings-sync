@@ -1,6 +1,13 @@
 [Unit]
 Description=Sync Plex playlists to MyBook export directory
+After=snap.plexmediaserver.plexmediaserver.service
+RequiresMountsFor=/mnt/MyBook
 
 [Service]
 Type=oneshot
-ExecStart=/home/paulceline/scripts/sync_plex_playlists_to_mybook.sh
+User=paulceline
+ExecStartPre=/bin/bash -c 'mountpoint -q /mnt/MyBook || { echo "MyBook non monté"; exit 1; }'
+ExecStart=/home/paulceline/scripts/playlists/sync_plex_playlists_to_mybook.sh
+
+[Install]
+WantedBy=multi-user.target

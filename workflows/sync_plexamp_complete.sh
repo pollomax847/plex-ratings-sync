@@ -2,6 +2,7 @@
 # Script complet pour synchroniser Plexamp avec les ratings Plex
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BASE_DIR="$(dirname "$SCRIPT_DIR")"
 LOG_FILE="$SCRIPT_DIR/sync_plexamp_$(date +%Y%m%d_%H%M%S).log"
 
 # Fonction de logging
@@ -13,8 +14,8 @@ log "🎵 Début de la synchronisation Plexamp..."
 
 # Étape 1: Synchroniser les ratings Plex vers les métadonnées ID3
 log "📊 Étape 1: Synchronisation des ratings vers métadonnées..."
-if [ -f "$SCRIPT_DIR/plex_rating_sync_complete.py" ]; then
-    python3 "$SCRIPT_DIR/plex_rating_sync_complete.py" --auto-find-db >> "$LOG_FILE" 2>&1
+if [ -f "$BASE_DIR/ratings/plex_rating_sync_complete.py" ]; then
+    python3 "$BASE_DIR/ratings/plex_rating_sync_complete.py" --auto-find-db >> "$LOG_FILE" 2>&1
     if [ $? -eq 0 ]; then
         log "✅ Ratings synchronisés vers métadonnées"
     else
@@ -27,8 +28,8 @@ fi
 
 # Étape 2: Générer les playlists Plexamp
 log "🎵 Étape 2: Génération des playlists Plexamp..."
-if [ -f "$SCRIPT_DIR/generate_plexamp_playlists.sh" ]; then
-    "$SCRIPT_DIR/generate_plexamp_playlists.sh" --refresh >> "$LOG_FILE" 2>&1
+if [ -f "$BASE_DIR/playlists/generate_plexamp_playlists.sh" ]; then
+    "$BASE_DIR/playlists/generate_plexamp_playlists.sh" --refresh >> "$LOG_FILE" 2>&1
     if [ $? -eq 0 ]; then
         log "✅ Playlists Plexamp générées"
     else
@@ -40,8 +41,8 @@ fi
 
 # Étape 3: Forcer le rescan Plexamp
 log "🔄 Étape 3: Forçage du rescan Plexamp..."
-if [ -f "$SCRIPT_DIR/force_plexamp_rescan.sh" ]; then
-    "$SCRIPT_DIR/force_plexamp_rescan.sh" >> "$LOG_FILE" 2>&1
+if [ -f "$BASE_DIR/maintenance/force_plexamp_rescan.sh" ]; then
+    "$BASE_DIR/maintenance/force_plexamp_rescan.sh" >> "$LOG_FILE" 2>&1
     log "✅ Rescan Plexamp déclenché"
 else
     log "⚠️ Script force_plexamp_rescan.sh introuvable"
@@ -49,8 +50,8 @@ fi
 
 # Étape 4: Notification
 log "🔔 Étape 4: Envoi de notification..."
-if [ -f "$SCRIPT_DIR/plex_notifications.sh" ]; then
-    "$SCRIPT_DIR/plex_notifications.sh" "plexamp_sync_completed" "Synchronisation Plexamp terminée" "Ratings mis à jour, playlists régénérées, rescan déclenché" >> "$LOG_FILE" 2>&1
+if [ -f "$BASE_DIR/notifications/plex_notifications.sh" ]; then
+    "$BASE_DIR/notifications/plex_notifications.sh" "plexamp_sync_completed" "Synchronisation Plexamp terminée" "Ratings mis à jour, playlists régénérées, rescan déclenché" >> "$LOG_FILE" 2>&1
 fi
 
 log "🎉 Synchronisation Plexamp terminée!"

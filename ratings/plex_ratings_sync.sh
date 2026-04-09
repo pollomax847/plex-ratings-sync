@@ -3,7 +3,8 @@
 # Supporte les pistes, artistes et albums
 # Compatible avec Rhythmbox, VLC, et autres lecteurs
 
-SCRIPT_DIR="$(dirname "$0")"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+BASE_DIR="$(dirname "$SCRIPT_DIR")"
 LOG_DIR="$HOME/.plex/logs/plex_ratings"
 mkdir -p "$LOG_DIR"
 
@@ -11,8 +12,8 @@ TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 LOG_FILE="$LOG_DIR/ratings_sync_$TIMESTAMP.log"
 
 # Charger le système de notifications générique
-if [[ -f "$SCRIPT_DIR/audio_notifications.sh" ]]; then
-    source "$SCRIPT_DIR/audio_notifications.sh"
+if [[ -f "$BASE_DIR/notifications/audio_notifications.sh" ]]; then
+    source "$BASE_DIR/notifications/audio_notifications.sh"
     export NOTIFICATION_APP_NAME="Plex Ratings Sync"
     export NOTIFICATION_ENABLE_CONSOLE=true
     export NOTIFICATION_ENABLE_DESKTOP=false  # Désactiver par défaut pour éviter les interruptions

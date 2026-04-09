@@ -1,8 +1,13 @@
 [Unit]
 Description=Export all Plex playlists to MyBook as compilations
+After=snap.plexmediaserver.plexmediaserver.service
+Requires=snap.plexmediaserver.plexmediaserver.service
 
 [Service]
 Type=oneshot
-Nice=15
-IOSchedulingClass=idle
-ExecStart=/usr/bin/python3 /home/paulceline/scripts/export_plex_playlist.py --all --dest /mnt/MyBook/itunes/Music --go --ytdlp
+User=paulceline
+ExecStartPre=/bin/bash -c 'for i in $(seq 1 30); do curl -sf http://localhost:32400/identity && exit 0; sleep 2; done; exit 1'
+ExecStart=/usr/bin/python3 /home/paulceline/scripts/playlists/export_plex_playlist.py --all --dest /mnt/MyBook/itunes/Music --go --ytdlp
+
+[Install]
+WantedBy=multi-user.target
