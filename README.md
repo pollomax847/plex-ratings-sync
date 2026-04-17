@@ -47,8 +47,8 @@ python3 itunes_editor.py "iTunes Music Library.xml" --backup --replace "Artist" 
 
 #### Mettre à jour les chemins de fichiers
 ```bash
-# Changer E:/ vers /mnt/mybook/
-python3 itunes_editor.py "iTunes Music Library.xml" --backup --update-paths "file://localhost/E:" "file://localhost/mnt/mybook"
+# Changer E:/ vers /mnt/MyBook/
+python3 itunes_editor.py "iTunes Music Library.xml" --backup --update-paths "file://localhost/E:" "file://localhost/mnt/MyBook"
 ```
 
 #### Utiliser des expressions régulières
@@ -80,7 +80,7 @@ python3 itunes_editor.py "iTunes Music Library.xml" --preview --replace "Name" "
 1. **Toujours créer une sauvegarde** avec `--backup`
 2. **Tester avec `--preview`** avant les modifications importantes
 3. **Le fichier original est en lecture seule** - modifications dans la copie locale
-4. **Copier manuellement** vers `/mnt/mybook/Musiques/iTunes/` si nécessaire
+4. **Copier manuellement** vers `/mnt/MyBook/Musiques/iTunes/` si nécessaire
 
 ### 🔄 Workflow recommandé
 
@@ -104,7 +104,7 @@ python3 itunes_editor.py "iTunes Music Library.xml" --backup --replace "Genre" "
 
 #### Corriger les chemins Windows vers Linux
 ```bash
-python3 itunes_editor.py "iTunes Music Library.xml" --backup --regex-replace "Location" "file://localhost/E:/" "file://localhost/mnt/mybook/"
+python3 itunes_editor.py "iTunes Music Library.xml" --backup --regex-replace "Location" "file://localhost/E:/" "file://localhost/mnt/MyBook/"
 ```
 
 ### 🆘 En cas de problème

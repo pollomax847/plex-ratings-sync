@@ -16,8 +16,8 @@ def fix_music_paths(xml_file, dry_run=False):
     print("="*50)
     
     # Pattern à corriger
-    old_pattern = "/mnt/mybook/Musiques/Music/"
-    new_pattern = "/mnt/mybook/Musiques/"
+    old_pattern = "/mnt/MyBook/Musiques/Music/"
+    new_pattern = "/mnt/MyBook/Musiques/"
     
     print(f"Correction à effectuer :")
     print(f"  Ancien: ...{old_pattern}...")
@@ -71,7 +71,7 @@ def verify_fixes(xml_file, sample_size=10):
         
         # Chercher des exemples de chemins
         import re
-        pattern = r'<string>(file://localhost/mnt/mybook/Musiques/[^<]+)</string>'
+        pattern = r'<string>(file://localhost/mnt/MyBook/Musiques/[^<]+)</string>'
         matches = re.findall(pattern, content)
         
         if not matches:
@@ -114,8 +114,8 @@ def main():
     print("🎵 CORRECTEUR DE CHEMINS ITUNES SPÉCIALISÉ")
     print("="*50)
     print("Ce script corrige le problème spécifique détecté:")
-    print("- Vos fichiers sont dans /mnt/mybook/Musiques/")
-    print("- Mais iTunes cherche dans /mnt/mybook/Musiques/Music/")
+    print("- Vos fichiers sont dans /mnt/MyBook/Musiques/")
+    print("- Mais iTunes cherche dans /mnt/MyBook/Musiques/Music/")
     print("- Solution: supprimer le '/Music/' superflu")
     
     # Demander confirmation

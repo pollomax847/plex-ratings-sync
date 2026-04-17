@@ -14,7 +14,7 @@ class iTunesUpdater:
         self.script_dir = "/home/paulceline/Documents/Projets/Modif xml itunes"
         self.library_file = "iTunes Music Library.xml"
         self.editor_script = "itunes_editor.py"
-        self.original_path = "/mnt/mybook/Musiques/iTunes/iTunes Music Library.xml"
+        self.original_path = "/mnt/MyBook/Musiques/iTunes/iTunes Music Library.xml"
     
     def run_command(self, cmd):
         """Exécute une commande et retourne le résultat"""
@@ -43,7 +43,7 @@ class iTunesUpdater:
         
         # 2. Corriger les chemins Windows vers Linux
         print("\n2️⃣ Correction des chemins de fichiers...")
-        cmd = f'python3 {self.editor_script} "{self.library_file}" --update-paths "file://localhost/E:/Musiques/" "file://localhost/mnt/mybook/Musiques/"'
+        cmd = f'python3 {self.editor_script} "{self.library_file}" --update-paths "file://localhost/E:/Musiques/" "file://localhost/mnt/MyBook/Musiques/"'
         if not self.run_command(cmd):
             return False
         

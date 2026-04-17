@@ -8,7 +8,7 @@ import os
 
 def test_url_decoding():
     # URL exemple tirée de votre bibliothèque
-    url = "file://localhost/mnt/mybook/Musiques/Music/C'est%20l'ap%C3%A9ro%20(Parodie%20Luis%20Fonsi)/Audios/C'est%20l'ap%C3%A9ro%20(Parodie%20Luis%20Fonsi)%20-.m4a"
+    url = "file://localhost/mnt/MyBook/Musiques/Music/C'est%20l'ap%C3%A9ro%20(Parodie%20Luis%20Fonsi)/Audios/C'est%20l'ap%C3%A9ro%20(Parodie%20Luis%20Fonsi)%20-.m4a"
     
     print("🔍 TEST DE DÉCODAGE D'URL")
     print("="*50)
@@ -50,9 +50,9 @@ def test_directory_structure():
     print("="*50)
     
     base_paths = [
-        "/mnt/mybook/",
-        "/mnt/mybook/Musiques/",
-        "/mnt/mybook/Musiques/Music/",
+        "/mnt/MyBook/",
+        "/mnt/MyBook/Musiques/",
+        "/mnt/MyBook/Musiques/Music/",
     ]
     
     for path in base_paths:

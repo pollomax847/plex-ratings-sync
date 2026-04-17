@@ -52,7 +52,7 @@ class iTunesCompleteManager:
     
     def copy_from_source(self):
         """Copie la bibliothèque depuis la source"""
-        source_path = "/mnt/mybook/Musiques/iTunes/iTunes Music Library.xml"
+        source_path = "/mnt/MyBook/Musiques/iTunes/iTunes Music Library.xml"
         
         if os.path.exists(source_path):
             print(f"📥 Copie depuis {source_path}...")
@@ -70,7 +70,7 @@ class iTunesCompleteManager:
     
     def copy_to_destination(self):
         """Copie la bibliothèque vers la destination"""
-        dest_path = "/mnt/mybook/Musiques/iTunes/iTunes Music Library.xml"
+        dest_path = "/mnt/MyBook/Musiques/iTunes/iTunes Music Library.xml"
         
         if not os.path.exists(self.xml_file):
             print(f"❌ Fichier local non trouvé : {self.xml_file}")
@@ -98,12 +98,12 @@ class iTunesCompleteManager:
         print("")
         print("🔧 MODIFICATIONS")
         print("  4. Corriger les chemins (mode interactif)")
-        print("  5. Correction automatique E: → /mnt/mybook/")
+        print("  5. Correction automatique E: → /mnt/MyBook/")
         print("  6. Gestionnaire avancé (interface complète)")
         print("")
         print("📁 GESTION DES FICHIERS")
-        print("  7. Copier depuis la source (/mnt/mybook/Musiques/)")
-        print("  8. Copier vers la destination (/mnt/mybook/Musiques/)")
+        print("  7. Copier depuis la source (/mnt/MyBook/Musiques/)")
+        print("  8. Copier vers la destination (/mnt/MyBook/Musiques/)")
         print("  9. Vérifier les fichiers")
         print("")
         print("📋 WORKFLOWS COMPLETS")
@@ -157,7 +157,7 @@ class iTunesCompleteManager:
         
         # 6. Sauvegarde
         print("\n6️⃣ Voulez-vous sauvegarder vers la destination ?")
-        choice = input("Sauvegarder vers /mnt/mybook/Musiques/ ? (o/N): ").strip().lower()
+        choice = input("Sauvegarder vers /mnt/MyBook/Musiques/ ? (o/N): ").strip().lower()
         
         if choice in ['o', 'oui', 'y', 'yes']:
             self.copy_to_destination()

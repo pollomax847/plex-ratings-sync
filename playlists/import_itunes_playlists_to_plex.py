@@ -1205,7 +1205,7 @@ def main() -> int:
         action="append",
         default=[],
         metavar="OLD:NEW",
-        help="Rewrite path prefix in iTunes track locations (e.g. /mnt/mybook/:/mnt/ssd/). Can be repeated.",
+        help="Rewrite path prefix in iTunes track locations (e.g. /mnt/MyBook/:/mnt/ssd/). Can be repeated.",
     )
     parser.add_argument("--itunes-include-smart", action="store_true", help="Also import iTunes smart playlists (skipped by default)")
     parser.add_argument("--itunes-replace", action="store_true", help="Replace existing Plex playlists imported from iTunes XML")
@@ -1375,7 +1375,7 @@ def main() -> int:
             path_maps.append((entry[:colon], entry[colon + 1:]))
         # Default remapping for this system if none specified
         if not path_maps:
-            path_maps = [("/mnt/mybook/", "/mnt/ssd/")]
+            path_maps = [("/mnt/MyBook/", "/mnt/ssd/")]
 
         print(f"\nImport iTunes XML: {xml_path} ({'APPLY' if args.apply else 'DRY-RUN'})")
         print(f"Path prefix remapping: {path_maps}")

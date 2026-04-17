@@ -45,7 +45,7 @@ Interface menu pour les opérations de base.
 ### Workflow 1 : Première utilisation
 ```bash
 # 1. Copier votre bibliothèque
-cp "/mnt/mybook/Musiques/iTunes/iTunes Music Library.xml" .
+cp "/mnt/MyBook/Musiques/iTunes/iTunes Music Library.xml" .
 
 # 2. Analyser la bibliothèque
 python3 itunes_analyzer.py --stats
@@ -95,13 +95,13 @@ python3 itunes_analyzer.py --all
 - Analyse des emplacements de fichiers
 
 ### ✅ Correction de Chemins
-- Remplacement automatique `E:/ → /mnt/mybook/`
+- Remplacement automatique `E:/ → /mnt/MyBook/`
 - Correction interactive personnalisée
 - Mode simulation (dry-run)
 - Sauvegardes automatiques avant modification
 
 ### ✅ Gestion des Fichiers
-- Copie depuis/vers `/mnt/mybook/Musiques/`
+- Copie depuis/vers `/mnt/MyBook/Musiques/`
 - Sauvegarde automatique avant modifications
 - Vérification de l'intégrité des fichiers
 
@@ -115,10 +115,10 @@ python3 itunes_analyzer.py --all
 Le système détecte et corrige automatiquement :
 
 ```
-file://E:/Musiques/          → file:///mnt/mybook/Musiques/
-file://localhost/E:/         → file:///mnt/mybook/
-E:/Musiques/                 → /mnt/mybook/Musiques/
-C:/Musiques/                 → /mnt/mybook/Musiques/
+file://E:/Musiques/          → file:///mnt/MyBook/Musiques/
+file://localhost/E:/         → file:///mnt/MyBook/
+E:/Musiques/                 → /mnt/MyBook/Musiques/
+C:/Musiques/                 → /mnt/MyBook/Musiques/
 ```
 
 ## 💾 Sauvegardes Automatiques
@@ -200,7 +200,7 @@ Pour l'accès à votre musique sur Linux, consultez :
 ### Problème : "Fichier non trouvé"
 ```bash
 # Copier depuis la source
-cp "/mnt/mybook/Musiques/iTunes/iTunes Music Library.xml" .
+cp "/mnt/MyBook/Musiques/iTunes/iTunes Music Library.xml" .
 ```
 
 ### Problème : "Erreur de parsing XML"

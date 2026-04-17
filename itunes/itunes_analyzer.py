@@ -328,7 +328,7 @@ class iTunesLibraryRobust:
         
         if path_patterns.get('E:/', 0) > 0:
             print(f"✅ Détecté {path_patterns['E:/']} pistes avec 'E:/'")
-            print(f"   Suggestion : --update-paths 'file://E:/' 'file:///mnt/mybook/'")
+            print(f"   Suggestion : --update-paths 'file://E:/' 'file:///mnt/MyBook/'")
         
         if self.stats['missing_files'] > 0:
             print(f"⚠️  {self.stats['missing_files']} fichiers manquants détectés")
@@ -359,7 +359,7 @@ def main():
     
     if not os.path.exists(args.xml_file):
         print(f"❌ Fichier non trouvé : {args.xml_file}")
-        print(f"💡 Vérifiez que le fichier existe ou copiez-le depuis /mnt/mybook/Musiques/")
+        print(f"💡 Vérifiez que le fichier existe ou copiez-le depuis /mnt/MyBook/Musiques/")
         sys.exit(1)
     
     # Charger la bibliothèque

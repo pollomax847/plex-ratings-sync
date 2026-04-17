@@ -165,7 +165,7 @@ Categories=AudioVideo;Audio;Player;
 
 3. Installez iTunes dans la VM
 
-4. Configurez le partage de dossiers pour accéder à `/mnt/mybook/Musiques/`
+4. Configurez le partage de dossiers pour accéder à `/mnt/MyBook/Musiques/`
 
 ### Synchronisation
 1. Démarrez la VM

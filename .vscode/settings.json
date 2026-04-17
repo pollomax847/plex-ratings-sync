@@ -14,6 +14,20 @@
         "/^mkdir -p ratings playlists itunes notifications audio workflows diagnostics maintenance utils data$/": {
             "approve": true,
             "matchCommandLine": true
-        }
+        },
+        "/^source \\.venv/bin/activate && python3 playlists/auto_playlists_plexamp\\.py --dry-run --verbose 2>&1 \\| head -80$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^source \\.venv/bin/activate && python3 playlists/auto_playlists_plexamp\\.py --dry-run 2>&1 \\| tail -50$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^source \\.venv/bin/activate && python3 audio/find_1_star_audios\\.py 2>&1 \\| tail -20$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "crontab": true,
+        "systemctl": true
     }
 }

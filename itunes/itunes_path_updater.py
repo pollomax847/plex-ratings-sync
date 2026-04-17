@@ -118,22 +118,22 @@ class iTunesPathUpdater:
         # Suggestions basées sur l'analyse
         if patterns['file://E:/'] > 0:
             print(f"✅ Trouvé {patterns['file://E:/']} chemins 'file://E:/'")
-            print(f"   → Commande : python3 {sys.argv[0]} --update 'file://E:/' 'file:///mnt/mybook/'")
+            print(f"   → Commande : python3 {sys.argv[0]} --update 'file://E:/' 'file:///mnt/MyBook/'")
         
         if patterns['file://localhost/E:/'] > 0:
             print(f"✅ Trouvé {patterns['file://localhost/E:/']} chemins 'file://localhost/E:/'")
-            print(f"   → Commande : python3 {sys.argv[0]} --update 'file://localhost/E:/' 'file:///mnt/mybook/'")
+            print(f"   → Commande : python3 {sys.argv[0]} --update 'file://localhost/E:/' 'file:///mnt/MyBook/'")
         
         if patterns['E:/Musiques/'] > 0:
             print(f"✅ Trouvé {patterns['E:/Musiques/']} chemins 'E:/Musiques/'")
-            print(f"   → Commande : python3 {sys.argv[0]} --update 'E:/Musiques/' '/mnt/mybook/Musiques/'")
+            print(f"   → Commande : python3 {sys.argv[0]} --update 'E:/Musiques/' '/mnt/MyBook/Musiques/'")
         
         # Corrections communes
         common_fixes = [
-            ("file://E:/Musiques/", "file:///mnt/mybook/Musiques/"),
-            ("file://localhost/E:/Musiques/", "file:///mnt/mybook/Musiques/"),
-            ("E:/Musiques/", "/mnt/mybook/Musiques/"),
-            ("file://C:/Musiques/", "file:///mnt/mybook/Musiques/"),
+            ("file://E:/Musiques/", "file:///mnt/MyBook/Musiques/"),
+            ("file://localhost/E:/Musiques/", "file:///mnt/MyBook/Musiques/"),
+            ("E:/Musiques/", "/mnt/MyBook/Musiques/"),
+            ("file://C:/Musiques/", "file:///mnt/MyBook/Musiques/"),
         ]
         
         print(f"\n🔧 CORRECTIONS COMMUNES POSSIBLES")
@@ -160,7 +160,7 @@ class iTunesPathUpdater:
         
         print(f"\n" + "=" * 50)
         print("Choisissez une option :")
-        print("1. Correction automatique E: → /mnt/mybook/")
+        print("1. Correction automatique E: → /mnt/MyBook/")
         print("2. Correction personnalisée")
         print("3. Simulation seulement")
         print("0. Annuler")
@@ -179,9 +179,9 @@ class iTunesPathUpdater:
             
             # Corrections automatiques
             corrections = [
-                ("file://E:/", "file:///mnt/mybook/"),
-                ("file://localhost/E:/", "file:///mnt/mybook/"),
-                ("E:/Musiques/", "/mnt/mybook/Musiques/"),
+                ("file://E:/", "file:///mnt/MyBook/"),
+                ("file://localhost/E:/", "file:///mnt/MyBook/"),
+                ("E:/Musiques/", "/mnt/MyBook/Musiques/"),
             ]
             
             total_changes = 0
@@ -232,7 +232,7 @@ def main():
     parser.add_argument('--update', nargs=2, metavar=('OLD', 'NEW'),
                        help='Mettre à jour les chemins (ancien nouveau)')
     parser.add_argument('--auto-fix', action='store_true',
-                       help='Correction automatique E: → /mnt/mybook/')
+                       help='Correction automatique E: → /mnt/MyBook/')
     parser.add_argument('--interactive', '-i', action='store_true',
                        help='Mode interactif')
     parser.add_argument('--dry-run', action='store_true',
@@ -262,9 +262,9 @@ def main():
             updater.create_backup()
         
         corrections = [
-            ("file://E:/", "file:///mnt/mybook/"),
-            ("file://localhost/E:/", "file:///mnt/mybook/"),
-            ("E:/Musiques/", "/mnt/mybook/Musiques/"),
+            ("file://E:/", "file:///mnt/MyBook/"),
+            ("file://localhost/E:/", "file:///mnt/MyBook/"),
+            ("E:/Musiques/", "/mnt/MyBook/Musiques/"),
         ]
         
         total_changes = 0

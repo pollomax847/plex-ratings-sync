@@ -190,7 +190,7 @@ class M3UPlaylistSync:
     def map_plex_path_to_real(self, plex_path: str) -> Optional[Path]:
         """Mappe un chemin Plex vers le chemin réel du système"""
         # Plex peut avoir des chemins comme /data/music/... qu'il faut mapper
-        # vers votre vraie bibliothèque /mnt/mybook/itunes/Music/...
+        # vers votre vraie bibliothèque /mnt/MyBook/itunes/Music/...
         
         # Extraire juste le nom du fichier et chercher dans la bibliothèque
         file_name = Path(plex_path).name

@@ -298,7 +298,7 @@ def main():
         
         # Copier vers l'emplacement original si demandé
         if args.output is None:
-            original_path = "/mnt/mybook/Musiques/iTunes/iTunes Music Library.xml"
+            original_path = "/mnt/MyBook/Musiques/iTunes/iTunes Music Library.xml"
             if os.path.exists(original_path):
                 response = input(f"Voulez-vous copier le fichier modifié vers {original_path} ? (o/N): ")
                 if response.lower() in ['o', 'oui', 'y', 'yes']:

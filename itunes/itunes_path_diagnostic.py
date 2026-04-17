@@ -104,7 +104,7 @@ def analyze_paths_detailed(xml_file):
         
         if file_status["missing"] > file_status["exists"]:
             print(f"⚠️  Plus de fichiers manquants que existants")
-            print(f"   Vérifiez que /mnt/mybook/ est bien monté")
+            print(f"   Vérifiez que /mnt/MyBook/ est bien monté")
         
         return patterns, examples, file_status
         
@@ -128,14 +128,14 @@ def suggest_fixes(patterns, examples):
     
     if localhost_mnt > total * 0.9:  # Plus de 90% sont déjà corrects
         print("✅ Vos chemins sont déjà majoritairement corrects !")
-        print("   Format: file://localhost/mnt/mybook/...")
+        print("   Format: file://localhost/mnt/MyBook/...")
         print("   Aucune correction nécessaire")
     else:
         print("🔄 Corrections possibles:")
         
         for pattern, count in patterns.items():
             if count > 0 and 'localhost/mnt' not in pattern:
-                print(f"   {pattern} → file://localhost/mnt/mybook/")
+                print(f"   {pattern} → file://localhost/mnt/MyBook/")
 
 def main():
     xml_file = "iTunes Music Library.xml"
@@ -154,11 +154,11 @@ def main():
         print(f"\n🗂️  VÉRIFICATION DU MONTAGE")
         print("-" * 40)
         
-        mount_point = "/mnt/mybook/"
+        mount_point = "/mnt/MyBook/"
         if os.path.exists(mount_point):
             print(f"✅ {mount_point} existe")
             
-            music_dir = "/mnt/mybook/Musiques/"
+            music_dir = "/mnt/MyBook/Musiques/"
             if os.path.exists(music_dir):
                 print(f"✅ {music_dir} accessible")
                 
