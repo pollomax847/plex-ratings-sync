@@ -1,0 +1,14 @@
+[Unit]
+Description=Sync Plex ratings 1/2 stars (suppression + songrec)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=paulceline
+ExecStart=/home/paulceline/scripts/ratings/plex_daily_ratings_sync.sh
+StandardOutput=append:/home/paulceline/logs/plex_ratings/daily.log
+StandardError=append:/home/paulceline/logs/plex_ratings/daily.log
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,14 @@
+[Unit]
+Description=Generate PlexAmp auto playlists (refresh)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=paulceline
+ExecStart=/home/paulceline/scripts/playlists/generate_plexamp_playlists.sh --refresh
+StandardOutput=append:/home/paulceline/logs/plexamp_playlists/daily.log
+StandardError=append:/home/paulceline/logs/plexamp_playlists/daily.log
+
+[Install]
+WantedBy=multi-user.target

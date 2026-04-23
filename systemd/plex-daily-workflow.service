@@ -1,0 +1,14 @@
+[Unit]
+Description=Plex daily workflow (ratings + maintenance)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=paulceline
+ExecStart=/home/paulceline/scripts/workflows/plex_daily_workflow.sh
+StandardOutput=append:/home/paulceline/logs/plex_workflow.log
+StandardError=append:/home/paulceline/logs/plex_workflow.log
+
+[Install]
+WantedBy=multi-user.target

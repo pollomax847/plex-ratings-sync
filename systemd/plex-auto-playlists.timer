@@ -1,0 +1,10 @@
+[Unit]
+Description=Run PlexAmp auto playlists refresh daily at 23h
+
+[Timer]
+OnCalendar=*-*-* 23:00:00
+Persistent=true
+Unit=plex-auto-playlists.service
+
+[Install]
+WantedBy=timers.target

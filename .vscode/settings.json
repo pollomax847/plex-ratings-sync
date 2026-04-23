@@ -28,6 +28,13 @@
             "matchCommandLine": true
         },
         "crontab": true,
-        "systemctl": true
+        "systemctl": true,
+        "true": true,
+        "/^sudo ls -la /var/spool/cron/crontabs/ 2>&1$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "git remote": true,
+        "git config": true
     }
 }

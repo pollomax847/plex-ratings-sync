@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Plex daily workflow at 2h
+
+[Timer]
+OnCalendar=*-*-* 02:00:00
+Persistent=true
+Unit=plex-daily-workflow.service
+
+[Install]
+WantedBy=timers.target
