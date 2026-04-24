@@ -1,0 +1,13 @@
+.git/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.log
+sauvegarde/
+data/*.json
+*.backup_*
+iTunes*.xml
+.vscode/
+.sixth/
+.DS_Store

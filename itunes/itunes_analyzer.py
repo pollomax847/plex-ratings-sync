@@ -334,10 +334,27 @@ class iTunesLibraryRobust:
             print(f"⚠️  {self.stats['missing_files']} fichiers manquants détectés")
             print(f"   Suggestion : --remove-missing pour nettoyer")
 
+def _find_itunes_xml():
+    """Cherche le fichier iTunes XML dans les chemins courants (Docker + hôte)."""
+    candidates = [
+        os.environ.get("ITUNES_XML", ""),
+        "/itunes/iTunes Music Library.xml",
+        "/music/iTunes/iTunes Music Library.xml",
+        "/music/iTunes Music Library.xml",
+        "/data/iTunes Music Library.xml",
+        os.path.join(os.getcwd(), "iTunes Music Library.xml"),
+        os.path.expanduser("~/Music/iTunes/iTunes Music Library.xml"),
+        os.path.expanduser("~/Musiques/iTunes/iTunes Music Library.xml"),
+    ]
+    for path in candidates:
+        if path and os.path.exists(path):
+            return path
+    return None
+
 def main():
     parser = argparse.ArgumentParser(description='Gestionnaire robuste de bibliothèque iTunes XML')
-    parser.add_argument('xml_file', nargs='?', default='iTunes Music Library.xml',
-                       help='Fichier XML de la bibliothèque iTunes')
+    parser.add_argument('xml_file', nargs='?', default=None,
+                       help='Fichier XML de la bibliothèque iTunes (auto-détecté si absent)')
     parser.add_argument('--stats', action='store_true',
                        help='Afficher les statistiques de base')
     parser.add_argument('--detailed', action='store_true',
@@ -356,10 +373,23 @@ def main():
                        help='Afficher toutes les informations')
     
     args = parser.parse_args()
-    
+
+    # Auto-détection si aucun fichier fourni
+    if args.xml_file is None:
+        args.xml_file = _find_itunes_xml()
+        if args.xml_file is None:
+            print("❌ Fichier iTunes Music Library.xml non trouvé")
+            print("💡 Chemins vérifiés :")
+            print("   • Variable d'env ITUNES_XML")
+            print("   • /itunes/iTunes Music Library.xml  (montage Docker)")
+            print("   • /music/iTunes/iTunes Music Library.xml")
+            print("   Configurez ITUNES_HOST dans .env pour pointer vers votre dossier iTunes.")
+            sys.exit(1)
+        print(f"📍 Fichier détecté : {args.xml_file}")
+
     if not os.path.exists(args.xml_file):
         print(f"❌ Fichier non trouvé : {args.xml_file}")
-        print(f"💡 Vérifiez que le fichier existe ou copiez-le depuis /mnt/MyBook/Musiques/")
+        print(f"💡 Configurez ITUNES_HOST dans .env (dossier contenant iTunes Music Library.xml)")
         sys.exit(1)
     
     # Charger la bibliothèque

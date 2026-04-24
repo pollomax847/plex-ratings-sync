@@ -26,8 +26,11 @@ from pathlib import Path
 from typing import Iterable
 
 DEFAULT_PLEX_DB = Path(
-    "/var/snap/plexmediaserver/common/Library/Application Support/"
-    "Plex Media Server/Plug-in Support/Databases/com.plexapp.plugins.library.db"
+    os.environ.get(
+        "PLEX_DB",
+        "/var/snap/plexmediaserver/common/Library/Application Support/"
+        "Plex Media Server/Plug-in Support/Databases/com.plexapp.plugins.library.db",
+    )
 )
 
 SUPPORTED_EXTENSIONS = {".m3u", ".m3u8", ".pls", ".xspf"}

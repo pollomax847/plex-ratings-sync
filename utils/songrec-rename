@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ -f /app/utils/songrec_rename_cli.py ]]; then
+  exec python3 /app/utils/songrec_rename_cli.py "$@"
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "$SCRIPT_DIR/songrec_rename_cli.py" ]]; then
+  exec python3 "$SCRIPT_DIR/songrec_rename_cli.py" "$@"
+fi
+
+echo "songrec_rename_cli.py introuvable" >&2
+exit 1

@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -o pipefail
+
 echo "🎵 SYNCHRONISATION COMPLÈTE: RATINGS + PLAY COUNTS"
 echo "=================================================="
 echo
@@ -28,15 +30,40 @@ echo "   ✅ Windows Media Player"
 echo "   ✅ Systèmes de gestion musicale"
 echo
 
+# Détection du chemin DB Plex (compatible Docker + host)
+find_plex_db() {
+    local candidates=()
+    if [ -n "${PLEX_DB:-}" ]; then
+        candidates+=("$PLEX_DB")
+    fi
+    candidates+=(
+        "/plex/Plug-in Support/Databases/com.plexapp.plugins.library.db"
+        "/var/snap/plexmediaserver/common/Library/Application Support/Plex Media Server/Plug-in Support/Databases/com.plexapp.plugins.library.db"
+        "/var/lib/plexmediaserver/Library/Application Support/Plex Media Server/Plug-in Support/Databases/com.plexapp.plugins.library.db"
+        "$HOME/.config/Plex Media Server/Plug-in Support/Databases/com.plexapp.plugins.library.db"
+    )
+    for p in "${candidates[@]}"; do
+        [ -f "$p" ] && echo "$p" && return 0
+    done
+    return 1
+}
+
+PLEX_DB_PATH="$(find_plex_db || true)"
+if [ -z "$PLEX_DB_PATH" ]; then
+    echo "❌ ERREUR: base Plex introuvable"
+    exit 1
+fi
+
 # Vérifier les données réelles
 echo "📊 VOS DONNÉES ACTUELLES :"
 echo "=========================="
 
 # Ratings
 echo "🌟 RATINGS :"
-ratings=$(python3 -c "
+if ! ratings=$(python3 - "$PLEX_DB_PATH" <<'PY'
 import sqlite3
-plex_db = '/var/snap/plexmediaserver/common/Library/Application Support/Plex Media Server/Plug-in Support/Databases/com.plexapp.plugins.library.db'
+import sys
+plex_db = sys.argv[1]
 conn = sqlite3.connect(plex_db)
 cursor = conn.cursor()
 cursor.execute('SELECT rating, COUNT(*) FROM metadata_item_settings WHERE rating IS NOT NULL GROUP BY rating ORDER BY rating')
@@ -45,14 +72,19 @@ for row in cursor.fetchall():
     stars = '⭐' * int(rating)
     print(f'   {stars} ({rating}) : {count} fichiers')
 conn.close()
-")
+PY
+); then
+    echo "$ratings"
+    exit 1
+fi
 echo "$ratings"
 
 echo
 echo "🔢 PLAY COUNTS :"
-playcounts=$(python3 -c "
+if ! playcounts=$(python3 - "$PLEX_DB_PATH" <<'PY'
 import sqlite3
-plex_db = '/var/snap/plexmediaserver/common/Library/Application Support/Plex Media Server/Plug-in Support/Databases/com.plexapp.plugins.library.db'
+import sys
+plex_db = sys.argv[1]
 conn = sqlite3.connect(plex_db)
 cursor = conn.cursor()
 cursor.execute('SELECT COUNT(*) FROM metadata_item_settings WHERE view_count > 0')
@@ -68,7 +100,11 @@ print(f'   🎧 Total écoutes enregistrées : {total_plays}')
 print(f'   🏆 Maximum écoutes (1 titre) : {max_plays}')
 print(f'   📊 Moyenne par titre : {avg_plays:.1f}')
 conn.close()
-")
+PY
+); then
+    echo "$playcounts"
+    exit 1
+fi
 echo "$playcounts"
 
 echo
@@ -76,9 +112,10 @@ echo "🎯 EXEMPLE DE SYNCHRONISATION :"
 echo "==============================="
 echo
 # Exemple avec un fichier réel qui a des stats
-example=$(python3 -c "
+if ! example=$(python3 - "$PLEX_DB_PATH" <<'PY'
 import sqlite3
-plex_db = '/var/snap/plexmediaserver/common/Library/Application Support/Plex Media Server/Plug-in Support/Databases/com.plexapp.plugins.library.db'
+import sys
+plex_db = sys.argv[1]
 conn = sqlite3.connect(plex_db)
 cursor = conn.cursor()
 cursor.execute('''
@@ -94,7 +131,7 @@ if row:
     title, rating, plays, album = row
     stars = '⭐' * int(rating)
     print(f'🎵 TITRE: {title}')
-    print(f'💿 ALBUM: {album or \"Inconnu\"}')
+    print(f'💿 ALBUM: {album or "Inconnu"}')
     print(f'🌟 RATING: {stars} ({rating})')
     print(f'🔢 ÉCOUTES: {plays} fois')
     print(f'')
@@ -105,7 +142,11 @@ if row:
 else:
     print('Aucun fichier avec rating ET play count trouvé')
 conn.close()
-")
+PY
+); then
+    echo "$example"
+    exit 1
+fi
 echo "$example"
 
 echo

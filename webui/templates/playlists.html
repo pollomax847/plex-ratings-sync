@@ -1,0 +1,945 @@
+{% extends "base.html" %}
+{% block title %}Playlists{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <p class="eyebrow">Analyse et synchronisation</p>
+    <h1>Outils Playlists</h1>
+    <p class="muted">Inspection M3U/PLS, matching audio, comparaison de versions et audit Plex depuis une seule page.</p>
+  </div>
+</section>
+{% if not pld_available %}<p class="err">Module detector indisponible : {{ pld_err }}</p>{% endif %}
+
+<section class="notice notice-info">
+  <strong>Repère rapide</strong>
+  <span>L'auto-détection du token Plex se trouve dans l'onglet <strong>Plex</strong>. En Docker, si <code>/plex/Preferences.xml</code> est en <code>600 root:root</code>, la détection listera le fichier mais ne pourra pas le lire.</span>
+</section>
+
+<section class="surface summary-panel">
+  <div class="section-head">
+    <h2>Presets rapides</h2>
+    <span class="section-meta">Remplissage automatique des champs</span>
+  </div>
+  <div class="tag-list">
+    <button class="btn ghost" onclick="applyPreset('defaults')">Defaults env</button>
+    <button class="btn ghost" onclick="applyPreset('docker')">Docker standard</button>
+    <button class="btn ghost" onclick="applyPreset('host')">Host standard</button>
+    <button class="btn ghost" onclick="clearPlaylistState()">Effacer etat local</button>
+  </div>
+</section>
+
+<div class="tabs">
+  <button data-tab="plex" onclick="tab('plex')" class="tab-btn active">1. Plex</button>
+  <button data-tab="import" onclick="tab('import')" class="tab-btn">2. Import</button>
+  <button data-tab="diagnostics" onclick="tab('diagnostics')" class="tab-btn">3. Diagnostic</button>
+</div>
+
+<section id="tab-plex" class="tab-pane">
+  {% if docker_mode %}
+  <div class="notice notice-warn compact-notice">
+    <strong>Mode Docker</strong>
+    <span>Les opérations Plex de cette page utilisent l'API. La lecture directe de <code>Preferences.xml</code> dépend encore des permissions du fichier monté.</span>
+  </div>
+  {% endif %}
+  <div class="plex-shell">
+    <section class="surface section-block plex-primary-card">
+      <div class="section-head">
+        <h2>Connexion Plex</h2>
+        <span class="section-meta">Détecter, lister, supprimer</span>
+      </div>
+      <p class="muted">Utilise <strong>Détecter auto</strong>, puis <strong>Lister</strong> pour afficher tes playlists. Tu peux supprimer depuis chaque carte.</p>
+      <div class="form-grid two-col compact-gap top-gap">
+        <div class="field-block span-2">
+          <label for="p-url">URL</label>
+          <input id="p-url" value="{{ defaults.plex_url }}">
+        </div>
+        <div class="field-block span-2">
+          <label for="p-token">Token</label>
+          <div class="inline-actions">
+            <input id="p-token" type="password" value="{{ defaults.plex_token }}">
+            <button class="btn" onclick="detectToken()">🔍 Détecter auto</button>
+          </div>
+        </div>
+      </div>
+      <div class="inline-actions top-gap">
+        <label class="inline-check"><input type="checkbox" id="p-smart" checked> Inclure smart playlists</label>
+        <button class="btn" onclick="doPlex()">📡 Lister</button>
+      </div>
+      <div id="p-detect-info" class="muted tiny-gap"></div>
+    </section>
+
+    <aside class="plex-side-stack">
+      <section class="surface section-block quick-action-card danger-accent">
+        <div class="section-head">
+          <h2>Suppression rapide</h2>
+          <span class="section-meta">Par nom exact</span>
+        </div>
+        <div class="field-block">
+          <label for="p-delete-name">Nom de la playlist à supprimer</label>
+          <input id="p-delete-name" placeholder="Nom exact dans Plex">
+        </div>
+        <div class="inline-actions top-gap">
+          <button class="btn danger" onclick="deletePlaylistByName()">🗑 Supprimer</button>
+        </div>
+        <div id="p-action-out" class="muted tiny-gap"></div>
+      </section>
+
+      <section class="surface section-block quick-tip-card">
+        <div class="section-head">
+          <h2>Repères</h2>
+          <span class="section-meta">Utilisation rapide</span>
+        </div>
+        <div class="result-list compact-result-list">
+          <article class="result-list-item">
+            <strong>1. Détection</strong>
+            <span class="table-subline">Préremplit l’URL et le token Plex quand c’est possible.</span>
+          </article>
+          <article class="result-list-item">
+            <strong>2. Listing</strong>
+            <span class="table-subline">Affiche les playlists audio et smart avec tri, filtre et export.</span>
+          </article>
+          <article class="result-list-item">
+            <strong>3. Action</strong>
+            <span class="table-subline">Supprime depuis une carte ou par nom exact dans le panneau latéral.</span>
+          </article>
+        </div>
+      </section>
+    </aside>
+  </div>
+  <div class="docker-log-toolbar" id="plex-toolbar">
+    <label>Recherche
+      <input id="plex-q" type="text" placeholder="Filtrer par titre/type" oninput="renderPlexList()">
+    </label>
+    <label>Tri
+      <select id="plex-sort" onchange="renderPlexList()">
+        <option value="title">Titre</option>
+        <option value="tracks">Nombre de pistes</option>
+        <option value="duration">Durée</option>
+      </select>
+    </label>
+    <label><input type="checkbox" id="plex-smart-only" onchange="renderPlexList()"> Smart uniquement</label>
+    <button class="btn ghost" onclick="exportPlex('json')">Export JSON</button>
+    <button class="btn ghost" onclick="exportPlex('csv')">Export CSV</button>
+  </div>
+  <div id="p-out" class="plex-results stack"></div>
+  <div id="p-tracks-out" class="stack plex-results"></div>
+</section>
+
+<section id="tab-import" class="tab-pane hidden">
+
+  <!-- ── Carte principale : import fichier Soundiiz ── -->
+  <section class="surface section-block">
+    <div class="section-head">
+      <div>
+        <h2>📥 Importer depuis Soundiiz</h2>
+        <p class="muted">Dépose ton export CSV ou JSON Soundiiz pour créer une playlist directement dans Plex.</p>
+      </div>
+    </div>
+
+    <!-- Zone de dépôt fichier -->
+    <div id="import-drop-zone" class="import-drop-zone" onclick="document.getElementById('p-import-file').click()"
+         ondragover="event.preventDefault();this.classList.add('drag-over')"
+         ondragleave="this.classList.remove('drag-over')"
+         ondrop="handleFileDrop(event)">
+      <span class="import-drop-icon">📄</span>
+      <span id="import-file-label">Cliquer ou déposer un fichier <code>.csv</code> / <code>.json</code></span>
+      <input id="p-import-file" type="file" accept=".csv,.json,application/json,text/csv"
+             style="display:none" onchange="updateFileLabel(this)">
+    </div>
+
+    <!-- Hint format Soundiiz -->
+    <details class="import-hint">
+      <summary>📋 Format CSV Soundiiz attendu</summary>
+      <div class="import-hint-body">
+        <p class="muted">Le fichier doit avoir au moins les colonnes <code>Track Name</code> et <code>Artist Name</code>.</p>
+        <pre class="import-example">Track Name,Artist Name,Album Name
+Bohemian Rhapsody,Queen,A Night at the Opera
+Billie Jean,Michael Jackson,Thriller</pre>
+      </div>
+    </details>
+
+    <!-- Grille de paramètres -->
+    <div class="import-form-grid">
+      <div class="field-block">
+        <label for="p-import-name">Nom de la playlist <em class="muted">(optionnel — sinon nom du fichier)</em></label>
+        <input id="p-import-name" type="text" placeholder="Ma playlist importée">
+      </div>
+      <div class="field-block">
+        <label for="p-source">Plateforme source</label>
+        <select id="p-source">
+          <option value="youtube">📺 YouTube</option>
+          <option value="spotify" selected>🟢 Spotify</option>
+          <option value="deezer">🟠 Deezer</option>
+          <option value="apple_music">🍎 Apple Music</option>
+          <option value="tidal">🔷 Tidal</option>
+        </select>
+      </div>
+      <div class="field-block">
+        <label for="p-mode">Mode d'import</label>
+        <select id="p-mode">
+          <option value="replace" selected>🔄 Remplacer — écrase la playlist existante</option>
+          <option value="merge">➕ Fusionner — ajoute aux pistes existantes</option>
+        </select>
+      </div>
+      <div class="field-block">
+        <label for="p-destination">Dossier de destination</label>
+        <input id="p-destination" type="text" value="{{ defaults.playlists }}" placeholder="/playlists">
+      </div>
+    </div>
+
+    <div class="import-actions">
+      <button class="btn" onclick="importSoundiizFile()">📥 Importer dans Plex</button>
+    </div>
+
+    <div id="p-import-out" class="import-result-out"></div>
+  </section>
+
+  <!-- ── Carte secondaire : workflow avancé ── -->
+  <details class="surface import-advanced">
+    <summary>
+      <span>🚀 Import workflow avancé</span>
+      <span class="muted import-advanced-meta">Lance un job en arrière-plan sans fichier</span>
+    </summary>
+    <div class="import-advanced-body">
+      <p class="muted">Synchronise depuis une source externe déjà configurée (sans fichier Soundiiz). Le résultat apparaît dans la page <a href="/jobs">Jobs</a>.</p>
+      <button class="btn secondary" onclick="runImportWorkflow()">🚀 Lancer import vers Plex</button>
+    </div>
+  </details>
+
+</section>
+
+<section id="tab-diagnostics" class="tab-pane hidden">
+  <section class="surface section-block">
+    <div class="section-head">
+      <h2>Scanner un dossier de playlists</h2>
+      <span class="section-meta">Étape 1</span>
+    </div>
+    <div class="form-grid two-col compact-gap top-gap">
+      <div class="field-block span-2">
+        <label for="scan-path">Dossier</label>
+        <input id="scan-path" value="{{ defaults.playlists }}">
+      </div>
+      <div class="inline-actions span-2">
+        <label class="inline-check"><input type="checkbox" id="scan-recursive" checked> Récursif</label>
+        <button class="btn" onclick="doScan()">🔍 Scanner</button>
+      </div>
+    </div>
+    <div id="scan-out" class="result-shell"></div>
+  </section>
+
+  <section class="surface section-block">
+    <div class="section-head">
+      <h2>Analyser une playlist</h2>
+      <span class="section-meta">Étape 2</span>
+    </div>
+    <div class="form-grid two-col compact-gap top-gap">
+      <div class="field-block span-2">
+        <label for="an-path">Fichier playlist</label>
+        <div class="inline-actions">
+          <input id="an-path" placeholder="/playlists/fete.m3u (chemin complet)">
+          <button class="btn" onclick="doAnalyze()">🔎 Analyser</button>
+        </div>
+      </div>
+    </div>
+    <div id="an-out"></div>
+  </section>
+
+  <section class="surface section-block">
+    <div class="section-head">
+      <h2>Tester le matching avec la bibliothèque</h2>
+      <span class="section-meta">Étape 3</span>
+    </div>
+    <div class="form-grid two-col compact-gap top-gap">
+      <div class="field-block span-2">
+        <label for="m-path">Playlist</label>
+        <input id="m-path" placeholder="chemin complet vers le fichier .m3u">
+      </div>
+      <div class="field-block span-2">
+        <label for="m-library">Bibliothèque</label>
+        <input id="m-library" value="{{ defaults.music }}">
+      </div>
+      <div class="inline-actions span-2">
+        <label class="inline-check"><input type="checkbox" id="m-tags"> Lire tags ID3 (lent)</label>
+        <button class="btn" onclick="doMatch()">🎯 Matcher</button>
+      </div>
+    </div>
+    <div id="m-out"></div>
+  </section>
+
+  <section class="surface section-block">
+    <div class="section-head">
+      <h2>Statistiques globales</h2>
+      <span class="section-meta">Étape 4</span>
+    </div>
+    <div class="form-grid two-col compact-gap top-gap">
+      <div class="field-block span-2">
+        <label for="s-path">Dossier</label>
+        <input id="s-path" value="{{ defaults.playlists }}">
+      </div>
+      <div class="field-block span-2">
+        <label for="s-library">Biblio (optionnel)</label>
+        <div class="inline-actions">
+          <input id="s-library" value="{{ defaults.music }}">
+          <button class="btn" onclick="doStats()">📊 Statistiques</button>
+        </div>
+      </div>
+    </div>
+    <div id="s-out"></div>
+  </section>
+</section>
+
+<script id="playlists-defaults" type="application/json">{{ defaults | tojson }}</script>
+<script>
+const PLAYLIST_STORAGE_KEY = 'plex-playlists-ui-state-v1';
+const STATE_INPUT_IDS = ['scan-path','scan-recursive','an-path','m-path','m-library','m-tags','p-url','p-smart','p-delete-name','p-source','p-destination','p-mode','p-import-name','s-path','s-library'];
+let __plexRaw = [];
+let __defaults = {};
+
+try {
+  const defaultsNode = document.getElementById('playlists-defaults');
+  __defaults = defaultsNode ? JSON.parse(defaultsNode.textContent || '{}') : {};
+} catch (_) {
+  __defaults = {};
+}
+
+function tab(name) {
+  const pane = document.getElementById('tab-'+name);
+  if (!pane) return;
+  document.querySelectorAll('.tab-pane').forEach(e => e.classList.add('hidden'));
+  document.querySelectorAll('.tab-btn').forEach(e => e.classList.remove('active'));
+  pane.classList.remove('hidden');
+  const btn = document.querySelector(`.tab-btn[data-tab="${name}"]`);
+  if (btn) btn.classList.add('active');
+  window.location.hash = 'pl-' + name;
+}
+
+async function post(url, body) {
+  const r = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+  return r.json();
+}
+
+async function detectToken() {
+  const info = document.getElementById('p-detect-info');
+  info.textContent = '⏳ Détection en cours...';
+  try {
+    const r = await fetch('/api/plex/detect');
+    const d = await r.json();
+    if (d.found) {
+      document.getElementById('p-token').value = d.token;
+      if (d.url) document.getElementById('p-url').value = d.url;
+      info.innerHTML = '<span class="ok">✓ Token détecté</span> — source : <code>' + d.source + '</code>';
+      persistPlaylistState();
+      await doPlex();
+    } else {
+      let html = '<span class="err">❌ Introuvable.</span> Chemins testés :<ul style="margin:4px 0">';
+      d.tried.forEach(t => {
+        html += '<li><code>'+t.path+'</code> — ' +
+                (t.exists ? 'existe' : 'absent') +
+                (t.note ? ' ('+t.note+')' : '') + '</li>';
+      });
+      html += '</ul><em>' + (d.hint||'') + '</em>';
+      info.innerHTML = html;
+    }
+  } catch (e) { info.textContent = '❌ ' + e; }
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+}
+
+function renderMetricCards(items) {
+  return `<div class="result-metrics">${items.map((item) => `
+    <article class="metric-card ${item.tone || ''}">
+      <strong>${escapeHtml(item.value)}</strong>
+      <span>${escapeHtml(item.label)}</span>
+    </article>`).join('')}</div>`;
+}
+
+function renderTagList(items, emptyText) {
+  if (!items || !items.length) return `<p class="muted">${escapeHtml(emptyText)}</p>`;
+  return `<div class="tag-list">${items.map((item) => `<span class="tag-chip">${escapeHtml(item)}</span>`).join('')}</div>`;
+}
+
+function renderResultPanel(title, body, meta='') {
+  return `<section class="surface result-panel">
+    <div class="section-head">
+      <h2>${escapeHtml(title)}</h2>
+      <span class="section-meta">${escapeHtml(meta)}</span>
+    </div>
+    ${body}
+  </section>`;
+}
+
+function renderError(container, message) {
+  container.innerHTML = `<section class="surface result-panel"><p class="err">❌ ${escapeHtml(message)}</p></section>`;
+}
+
+function applyPreset(kind) {
+  const map = {
+    defaults: {
+      music: __defaults.music || '',
+      playlists: __defaults.playlists || '',
+      plexUrl: __defaults.plex_url || '',
+    },
+    docker: {
+      music: '/music',
+      playlists: '/playlists',
+      plexUrl: 'http://host.docker.internal:32400',
+    },
+    host: {
+      music: '/mnt/music',
+      playlists: '/mnt/music/playlists',
+      plexUrl: 'http://127.0.0.1:32400',
+    },
+  };
+  const p = map[kind] || map.defaults;
+  document.getElementById('scan-path').value = p.playlists || '';
+  document.getElementById('s-path').value = p.playlists || '';
+  document.getElementById('m-library').value = p.music || '';
+  document.getElementById('s-library').value = p.music || '';
+  document.getElementById('p-url').value = p.plexUrl || '';
+  persistPlaylistState();
+}
+
+function persistPlaylistState() {
+  const state = {};
+  STATE_INPUT_IDS.forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    state[id] = el.type === 'checkbox' ? el.checked : el.value;
+  });
+  localStorage.setItem(PLAYLIST_STORAGE_KEY, JSON.stringify(state));
+}
+
+function restorePlaylistState() {
+  const raw = localStorage.getItem(PLAYLIST_STORAGE_KEY);
+  if (!raw) return;
+  try {
+    const state = JSON.parse(raw);
+    STATE_INPUT_IDS.forEach((id) => {
+      const el = document.getElementById(id);
+      if (!el || !(id in state)) return;
+      if (el.type === 'checkbox') el.checked = Boolean(state[id]);
+      else if (typeof state[id] === 'string') el.value = state[id];
+    });
+  } catch (_) {}
+}
+
+function clearSensitiveInputs() {
+  const plexToken = document.getElementById('p-token');
+  if (plexToken) plexToken.value = '';
+}
+
+function clearPlaylistState() {
+  localStorage.removeItem(PLAYLIST_STORAGE_KEY);
+  applyPreset('defaults');
+  clearSensitiveInputs();
+}
+
+function bindStatePersistence() {
+  STATE_INPUT_IDS.forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const eventName = el.type === 'checkbox' ? 'change' : 'input';
+    el.addEventListener(eventName, persistPlaylistState);
+  });
+}
+
+function fillAnalyzeAndMatchFromScan(filePath) {
+  document.getElementById('an-path').value = filePath;
+  document.getElementById('m-path').value = filePath;
+  persistPlaylistState();
+  tab('diagnostics');
+}
+
+async function doScan() {
+  const out = document.getElementById('scan-out');
+  out.innerHTML = '<section class="surface result-panel"><p>⏳ Scan en cours...</p></section>';
+  const d = await post('/api/playlists/scan', {
+    path: document.getElementById('scan-path').value,
+    recursive: document.getElementById('scan-recursive').checked,
+  });
+  if (d.error) { renderError(out, d.error); return; }
+  const metrics = renderMetricCards([
+    {value: d.count, label: 'Playlists trouvées'},
+    {value: d.by_ext.length, label: 'Formats détectés'},
+    {value: d.truncated ? 'Oui' : 'Non', label: 'Résultat tronqué', tone: d.truncated ? 'warn' : ''},
+  ]);
+  const formats = renderTagList(d.by_ext.map(([ext, count]) => `${ext || '(none)'} · ${count}`), 'Aucun format détecté');
+  const files = `<div class="result-list">${d.files.slice(0, 30).map((file) => `<article class="result-list-item with-action"><code>${escapeHtml(file)}</code><button class="btn ghost" data-path="${encodeURIComponent(String(file))}" onclick="fillAnalyzeAndMatchFromScan(decodeURIComponent(this.dataset.path))">Utiliser</button></article>`).join('')}</div>`;
+  out.innerHTML = metrics + renderResultPanel('Répartition', formats, 'extensions') + renderResultPanel('Premiers fichiers', files, d.truncated ? 'tronqué à 30 éléments' : 'aperçu');
+}
+
+async function doAnalyze() {
+  const out = document.getElementById('an-out');
+  const path = document.getElementById('an-path').value.trim();
+  if (!path) { renderError(out, 'Veuillez saisir le chemin d\'un fichier playlist (.m3u, .pls…)'); return; }
+  out.innerHTML = '<section class="surface result-panel"><p>⏳ Analyse en cours...</p></section>';
+  const d = await post('/api/playlists/analyze', {path});
+  if (d.error) { renderError(out, d.error); return; }
+  const existing = d.entries.filter((entry) => entry.exists).length;
+  let html = renderMetricCards([
+    {value: d.track_count, label: 'Entrées'},
+    {value: d.format, label: 'Format'},
+    {value: d.encoding, label: 'Encodage'},
+    {value: existing, label: 'Chemins présents', tone: existing === d.track_count ? 'ok' : 'warn'},
+  ]);
+  html += '<table class="runs"><tr><th></th><th>Fichier</th><th>Artiste</th><th>Titre</th></tr>';
+  d.entries.slice(0,200).forEach((e,i) => {
+    const mark = e.exists ? '✓' : '✗';
+    const cls = e.exists ? 'ok' : 'err';
+    html += `<tr class="row-${cls}"><td>${mark}</td><td><code>${e.path}</code></td><td>${e.artist||''}</td><td>${e.title||''}</td></tr>`;
+  });
+  html += '</table>';
+  out.innerHTML = renderResultPanel(d.name, html, 'analyse détaillée');
+}
+
+async function doMatch() {
+  const out = document.getElementById('m-out');
+  const path = document.getElementById('m-path').value.trim();
+  const library = document.getElementById('m-library').value.trim();
+  if (!path) { renderError(out, 'Veuillez saisir le chemin de la playlist (.m3u, .pls…)'); return; }
+  if (!library) { renderError(out, 'Veuillez saisir le chemin du dossier bibliothèque musicale'); return; }
+  out.innerHTML = '<section class="surface result-panel"><p>⏳ Indexation + matching en cours...</p></section>';
+  const d = await post('/api/playlists/match', {
+    path,
+    library,
+    tags: document.getElementById('m-tags').checked,
+  });
+  if (d.error) { renderError(out, d.error); return; }
+  const rateColor = d.rate >= 90 ? 'ok' : d.rate >= 70 ? 'warn' : 'err';
+  let html = renderMetricCards([
+    {value: d.library_size, label: 'Pistes indexées'},
+    {value: `${d.matched}/${d.total}`, label: 'Matchs'},
+    {value: `${d.rate.toFixed(1)}%`, label: 'Taux de match', tone: rateColor},
+    {value: d.unmatched, label: 'Non matchées', tone: d.unmatched ? 'warn' : 'ok'},
+  ]);
+  html += renderResultPanel('Stratégies', renderTagList(d.by_strategy.map(([strategy, count]) => `${strategy} · ${count}`), 'Aucune stratégie utilisée'), 'matching');
+  if (d.unmatched_list.length) {
+    html += renderResultPanel(
+      'Non matchées',
+      `<div class="result-list">${d.unmatched_list.slice(0,50).map((entry) => `<article class="result-list-item"><strong>${escapeHtml(entry.title || entry.entry)}</strong><span class="table-subline">${escapeHtml(entry.artist || entry.entry)}</span></article>`).join('')}</div>`,
+      'jusqu\'à 50 éléments'
+    );
+  }
+  if (d.matched_list.length) {
+    html += renderResultPanel(
+      'Exemples de correspondances',
+      `<div class="result-list">${d.matched_list.slice(0,20).map((entry) => `<article class="result-list-item"><strong>${escapeHtml(entry.title || entry.entry)}</strong><span class="table-subline">${escapeHtml(entry.strategy)} · ${escapeHtml(entry.matched)}</span></article>`).join('')}</div>`,
+      '20 premiers matchs'
+    );
+  }
+  out.innerHTML = html;
+}
+
+async function doDiff() {
+  const out = document.getElementById('d-out');
+  const left = document.getElementById('d-left').value.trim();
+  const right = document.getElementById('d-right').value.trim();
+  if (!left || !right) { renderError(out, 'Veuillez renseigner deux fichiers playlists.'); return; }
+  out.innerHTML = '<section class="surface result-panel"><p>⏳ Comparaison en cours...</p></section>';
+  const d = await post('/api/playlists/diff', {left, right});
+  if (d.error) { renderError(out, d.error); return; }
+  let html = renderMetricCards([
+    {value: d.left_count, label: 'Entrées A'},
+    {value: d.right_count, label: 'Entrées B'},
+    {value: d.same, label: 'Communes', tone: 'ok'},
+    {value: `+${d.added_count} / -${d.removed_count}`, label: 'Diff', tone: (d.added_count || d.removed_count) ? 'warn' : 'ok'},
+  ]);
+  html += renderResultPanel(
+    'Ajouts (B non présents dans A)',
+    d.added.length ? `<div class="result-list">${d.added.map((row) => `<article class="result-list-item"><strong>${escapeHtml(row.title || row.path)}</strong><span class="table-subline">${escapeHtml(row.artist || row.path)}</span></article>`).join('')}</div>` : '<p class="muted">Aucun ajout.</p>',
+    d.truncated ? 'liste tronquée' : 'complet'
+  );
+  html += renderResultPanel(
+    'Suppressions (A absents de B)',
+    d.removed.length ? `<div class="result-list">${d.removed.map((row) => `<article class="result-list-item"><strong>${escapeHtml(row.title || row.path)}</strong><span class="table-subline">${escapeHtml(row.artist || row.path)}</span></article>`).join('')}</div>` : '<p class="muted">Aucune suppression.</p>',
+    d.truncated ? 'liste tronquée' : 'complet'
+  );
+  out.innerHTML = html;
+}
+
+async function doDedupe() {
+  const out = document.getElementById('dd-out');
+  const path = document.getElementById('dd-path').value.trim();
+  if (!path) { renderError(out, 'Veuillez renseigner un fichier playlist.'); return; }
+  out.innerHTML = '<section class="surface result-panel"><p>⏳ Analyse doublons en cours...</p></section>';
+  const d = await post('/api/playlists/dedupe', {path});
+  if (d.error) { renderError(out, d.error); return; }
+  let html = renderMetricCards([
+    {value: d.track_count, label: 'Entrées totales'},
+    {value: d.exact_group_count, label: 'Groupes doublons exacts', tone: d.exact_group_count ? 'warn' : 'ok'},
+    {value: d.meta_group_count, label: 'Groupes doublons artiste/titre', tone: d.meta_group_count ? 'warn' : 'ok'},
+    {value: d.truncated ? 'Oui' : 'Non', label: 'Résultat tronqué', tone: d.truncated ? 'warn' : ''},
+  ]);
+
+  const exactBody = d.exact_groups.length
+    ? `<div class="result-list">${d.exact_groups.slice(0, 30).map((g) => `<article class="result-list-item"><strong>${escapeHtml(g.count)} occurences</strong><span class="table-subline">${escapeHtml(g.examples[0]?.path || g.key)}</span></article>`).join('')}</div>`
+    : '<p class="muted">Aucun doublon exact detecte.</p>';
+  const metaBody = d.meta_groups.length
+    ? `<div class="result-list">${d.meta_groups.slice(0, 30).map((g) => `<article class="result-list-item"><strong>${escapeHtml(g.count)} occurences</strong><span class="table-subline">${escapeHtml(g.key)}</span></article>`).join('')}</div>`
+    : '<p class="muted">Aucun doublon artiste/titre detecte.</p>';
+
+  html += renderResultPanel('Doublons exacts', exactBody, 'top 30');
+  html += renderResultPanel('Doublons metadonnees', metaBody, 'top 30');
+  out.innerHTML = html;
+}
+
+function getPlexFiltered() {
+  const q = (document.getElementById('plex-q')?.value || '').trim().toLowerCase();
+  const sortBy = document.getElementById('plex-sort')?.value || 'title';
+  const smartOnly = Boolean(document.getElementById('plex-smart-only')?.checked);
+
+  let rows = __plexRaw.slice();
+  if (smartOnly) rows = rows.filter((p) => p.smart);
+  if (q) {
+    rows = rows.filter((p) =>
+      String(p.title || '').toLowerCase().includes(q)
+      || String(p.type || '').toLowerCase().includes(q)
+    );
+  }
+
+  rows.sort((a, b) => {
+    if (sortBy === 'tracks') return (b.leaf_count || 0) - (a.leaf_count || 0);
+    if (sortBy === 'duration') return (b.duration_ms || 0) - (a.duration_ms || 0);
+    return String(a.title || '').localeCompare(String(b.title || ''), 'fr');
+  });
+  return rows;
+}
+
+function renderPlexList() {
+  const out = document.getElementById('p-out');
+  if (!__plexRaw.length) {
+    out.innerHTML = '<p class="muted">Aucune playlist chargee.</p>';
+    return;
+  }
+  const rows = getPlexFiltered();
+  let html = renderMetricCards([
+    {value: __plexRaw.length, label: 'Playlists Plex'},
+    {value: rows.length, label: 'Apres filtre'},
+    {value: __plexRaw.filter((p) => p.smart).length, label: 'Smart playlists'},
+    {value: __plexRaw.filter((p) => p.type === 'audio').length, label: 'Audio'},
+  ]);
+  html += `<div class="playlist-card-grid">${rows.map((p) => `
+    <article class="playlist-card ${p.smart ? 'is-smart' : ''}">
+      <div class="playlist-card-topline">
+        <strong>${escapeHtml(p.title)}</strong>
+        <span class="pill ${p.smart ? 'running' : 'success'}">${p.smart ? 'smart' : p.type}</span>
+      </div>
+      <div class="playlist-card-meta">
+        <span>Type : ${escapeHtml(p.type)}</span>
+        <span>Pistes : ${escapeHtml(p.leaf_count)}</span>
+        <span>Duree : ${Math.round((p.duration_ms||0)/60000)} min</span>
+      </div>
+      <div class="playlist-card-actions">
+        <button class="btn ghost" onclick='loadPlexTracks(${JSON.stringify({
+          ratingKey: String(p.rating_key || ''),
+          title: String(p.title || ''),
+        })})'>Voir pistes</button>
+        <button class="btn ghost" onclick='exportPlexM3UFromPlaylist(${JSON.stringify({
+          ratingKey: String(p.rating_key || ''),
+          title: String(p.title || ''),
+        })})'>Export M3U</button>
+        <button class="btn danger" onclick='deletePlexPlaylist(${JSON.stringify({
+          ratingKey: String(p.rating_key || ''),
+          title: String(p.title || ''),
+        })})'>Supprimer</button>
+      </div>
+    </article>`).join('')}</div>`;
+  out.innerHTML = html;
+}
+
+async function deletePlexPlaylist(playlist) {
+  const actionOut = document.getElementById('p-action-out');
+  if (!playlist?.ratingKey) {
+    actionOut.innerHTML = '<span class="err">❌ rating_key introuvable pour cette playlist.</span>';
+    return;
+  }
+  if (!confirm(`Supprimer la playlist "${playlist.title || 'sans nom'}" ?`)) return;
+
+  actionOut.textContent = '⏳ Suppression en cours...';
+  const d = await post('/api/playlists/plex/delete', {
+    rating_key: playlist.ratingKey,
+    playlist_name: playlist.title,
+    url: document.getElementById('p-url').value,
+    token: document.getElementById('p-token').value,
+  });
+  if (d.error) {
+    actionOut.innerHTML = `<span class="err">❌ ${escapeHtml(d.error)}</span>`;
+    return;
+  }
+
+  __plexRaw = __plexRaw.filter((p) => String(p.rating_key || '') !== String(d.rating_key || ''));
+  renderPlexList();
+  actionOut.innerHTML = `<span class="ok">✅ Playlist supprimée: ${escapeHtml(playlist.title || d.playlist_name || '')}</span>`;
+}
+
+async function deletePlaylistByName() {
+  const actionOut = document.getElementById('p-action-out');
+  const name = document.getElementById('p-delete-name').value.trim();
+  if (!name) {
+    actionOut.innerHTML = '<span class="err">❌ Saisis le nom de la playlist à supprimer.</span>';
+    return;
+  }
+  if (!confirm(`Supprimer la playlist "${name}" ?`)) return;
+
+  const exact = __plexRaw.find((p) => String(p.title || '').toLowerCase() === name.toLowerCase());
+  actionOut.textContent = '⏳ Suppression en cours...';
+  const d = await post('/api/playlists/plex/delete', {
+    playlist_name: name,
+    rating_key: exact ? String(exact.rating_key || '') : '',
+    url: document.getElementById('p-url').value,
+    token: document.getElementById('p-token').value,
+  });
+  if (d.error) {
+    actionOut.innerHTML = `<span class="err">❌ ${escapeHtml(d.error)}</span>`;
+    return;
+  }
+
+  __plexRaw = __plexRaw.filter((p) => String(p.rating_key || '') !== String(d.rating_key || ''));
+  renderPlexList();
+  document.getElementById('p-delete-name').value = '';
+  persistPlaylistState();
+  actionOut.innerHTML = `<span class="ok">✅ Playlist supprimée: ${escapeHtml(name)}</span>`;
+}
+
+async function runImportWorkflow() {
+  const actionOut = document.getElementById('p-import-out');
+  const payload = {
+    source: document.getElementById('p-source').value,
+    destination: document.getElementById('p-destination').value.trim(),
+    mode: document.getElementById('p-mode').value,
+    url: document.getElementById('p-url').value,
+    token: document.getElementById('p-token').value,
+  };
+
+  if (!payload.destination) {
+    actionOut.innerHTML = '<span class="err">❌ Dossier de destination requis.</span>';
+    return;
+  }
+
+  actionOut.textContent = '⏳ Lancement du workflow import...';
+  const d = await post('/api/playlists/import/run', payload);
+  if (d.error) {
+    actionOut.innerHTML = `<span class="err">❌ ${escapeHtml(d.error)}</span>`;
+    return;
+  }
+  persistPlaylistState();
+  actionOut.innerHTML = `<span class="ok">✅ Import lancé (${escapeHtml(d.source)} / ${escapeHtml(d.mode)}).</span> <a href="/job/${encodeURIComponent(d.run_id)}">Voir le job</a>`;
+}
+
+function updateFileLabel(input) {
+  const zone = document.getElementById('import-drop-zone');
+  const label = document.getElementById('import-file-label');
+  const file = input?.files?.[0];
+  if (file) {
+    label.textContent = `📄 ${file.name} (${(file.size / 1024).toFixed(1)} Ko)`;
+    zone.classList.add('has-file');
+  } else {
+    label.innerHTML = 'Cliquer ou déposer un fichier <code>.csv</code> / <code>.json</code>';
+    zone.classList.remove('has-file');
+  }
+}
+
+function handleFileDrop(event) {
+  event.preventDefault();
+  const zone = document.getElementById('import-drop-zone');
+  zone.classList.remove('drag-over');
+  const file = event.dataTransfer?.files?.[0];
+  if (!file) return;
+  const input = document.getElementById('p-import-file');
+  const dt = new DataTransfer();
+  dt.items.add(file);
+  input.files = dt.files;
+  updateFileLabel(input);
+}
+
+async function importSoundiizFile() {
+  const actionOut = document.getElementById('p-import-out');
+  const fileInput = document.getElementById('p-import-file');
+  const file = fileInput?.files?.[0];
+  if (!file) {
+    actionOut.innerHTML = '<span class="err">❌ Choisis un fichier .csv ou .json.</span>';
+    return;
+  }
+
+  const payload = {
+    filename: file.name,
+    content: await file.text(),
+    source: document.getElementById('p-source').value,
+    mode: document.getElementById('p-mode').value,
+    playlist_name: document.getElementById('p-import-name').value.trim(),
+    url: document.getElementById('p-url').value,
+    token: document.getElementById('p-token').value,
+  };
+
+  actionOut.textContent = '⏳ Import Soundiiz en cours...';
+  const d = await post('/api/playlists/import/soundiiz', payload);
+  if (d.error) {
+    actionOut.innerHTML = `<span class="err">❌ ${escapeHtml(d.error)}</span>`;
+    return;
+  }
+
+  actionOut.innerHTML = `<span class="ok">✅ Playlist importée: ${escapeHtml(d.playlist_name)}.</span> ${escapeHtml(d.matched)}/${escapeHtml(d.total_tracks)} pistes matchées.`;
+  await doPlex();
+}
+
+function slugifyFilename(value) {
+  return String(value || 'playlist')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9-_ ]/g, '')
+    .trim()
+    .replace(/\s+/g, '_')
+    .toLowerCase() || 'playlist';
+}
+
+async function loadPlexTracks(playlist) {
+  const out = document.getElementById('p-tracks-out');
+  out.innerHTML = '<section class="surface result-panel"><p>⏳ Chargement des pistes Plex...</p></section>';
+  const d = await post('/api/playlists/plex/tracks', {
+    rating_key: playlist.ratingKey,
+    url: document.getElementById('p-url').value,
+    token: document.getElementById('p-token').value,
+  });
+  if (d.error) { renderError(out, d.error); return; }
+
+  const rows = d.tracks || [];
+  let body = renderMetricCards([
+    {value: playlist.title || 'Playlist', label: 'Selection'},
+    {value: d.count, label: 'Pistes'},
+    {value: `${d.duration_min} min`, label: 'Duree'},
+  ]);
+
+  body += `<div class="tag-list" style="margin-bottom:10px">
+    <button class="btn secondary" onclick='downloadM3UFromTracks(${JSON.stringify({
+      title: String(playlist.title || 'playlist'),
+      tracks: rows,
+    })})'>Telecharger M3U</button>
+  </div>`;
+
+  body += rows.length
+    ? `<div class="result-list">${rows.slice(0, 300).map((t, i) => `<article class="result-list-item"><strong>${i + 1}. ${escapeHtml(t.title || '(sans titre)')}</strong><span class="table-subline">${escapeHtml(t.artist || '')} · ${escapeHtml(t.album || '')}</span><code>${escapeHtml(t.file || '')}</code></article>`).join('')}</div>`
+    : '<p class="muted">Aucune piste retournee par Plex.</p>';
+
+  out.innerHTML = renderResultPanel(`Pistes Plex: ${playlist.title || ''}`, body, rows.length > 300 ? 'affichage limite a 300' : 'complet');
+}
+
+function downloadM3UFromTracks(payload) {
+  const title = payload.title || 'playlist';
+  const tracks = payload.tracks || [];
+  const lines = ['#EXTM3U', `#PLAYLIST:${title}`];
+  tracks.forEach((t) => {
+    const duration = Number.isFinite(Number(t.duration)) ? Math.round(Number(t.duration)) : -1;
+    const artist = (t.artist || '').trim();
+    const trackTitle = (t.title || '').trim() || 'Unknown Title';
+    const label = artist ? `${artist} - ${trackTitle}` : trackTitle;
+    lines.push(`#EXTINF:${duration},${label}`);
+    if (t.file) lines.push(String(t.file));
+  });
+  downloadFile(`${slugifyFilename(title)}.m3u`, lines.join('\n'), 'audio/x-mpegurl');
+}
+
+async function exportPlexM3UFromPlaylist(playlist) {
+  const d = await post('/api/playlists/plex/tracks', {
+    rating_key: playlist.ratingKey,
+    url: document.getElementById('p-url').value,
+    token: document.getElementById('p-token').value,
+  });
+  if (d.error) {
+    const out = document.getElementById('p-tracks-out');
+    renderError(out, d.error);
+    return;
+  }
+  downloadM3UFromTracks({title: playlist.title || 'playlist', tracks: d.tracks || []});
+}
+
+function downloadFile(name, content, mime='text/plain') {
+  const blob = new Blob([content], {type: mime});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function exportPlex(kind) {
+  const rows = getPlexFiltered();
+  if (!rows.length) return;
+  if (kind === 'json') {
+    downloadFile('plex_playlists_export.json', JSON.stringify(rows, null, 2), 'application/json');
+    return;
+  }
+  const head = ['title','type','smart','leaf_count','duration_min'];
+  const lines = [head.join(',')];
+  rows.forEach((row) => {
+    const values = [
+      row.title,
+      row.type,
+      row.smart ? 'yes' : 'no',
+      row.leaf_count || 0,
+      Math.round((row.duration_ms || 0) / 60000),
+    ].map((v) => `"${String(v ?? '').replaceAll('"', '""')}"`);
+    lines.push(values.join(','));
+  });
+  downloadFile('plex_playlists_export.csv', lines.join('\n'), 'text/csv');
+}
+
+async function doPlex() {
+  const out = document.getElementById('p-out');
+  out.innerHTML = '<section class="surface result-panel"><p>⏳ Requête Plex en cours...</p></section>';
+  const d = await post('/api/playlists/plex', {
+    url: document.getElementById('p-url').value,
+    token: document.getElementById('p-token').value,
+    include_smart: document.getElementById('p-smart').checked,
+  });
+  if (d.error) { renderError(out, d.error); return; }
+  __plexRaw = d;
+  document.getElementById('plex-toolbar').style.display = 'flex';
+  renderPlexList();
+}
+
+async function doStats() {
+  const out = document.getElementById('s-out');
+  const path = document.getElementById('s-path').value.trim();
+  if (!path) { renderError(out, 'Veuillez saisir le chemin du dossier de playlists'); return; }
+  out.innerHTML = '<section class="surface result-panel"><p>⏳ Statistiques en cours...</p></section>';
+  const d = await post('/api/playlists/stats', {
+    path,
+    library: document.getElementById('s-library').value.trim() || null,
+  });
+  if (d.error) { renderError(out, d.error); return; }
+  let html = renderMetricCards([
+    {value: d.playlist_count, label: 'Playlists'},
+    {value: d.total_entries, label: 'Entrées totales'},
+    {value: d.broken, label: 'Entrées cassées', tone: d.broken ? 'warn' : 'ok'},
+    {value: d.match_rate !== null ? `${d.match_rate.toFixed(1)}%` : 'n/a', label: 'Match rate'},
+  ]);
+  html += renderResultPanel('Formats', renderTagList(d.by_format.map(([fmt, count]) => `${fmt} · ${count}`), 'Aucun format'), 'distribution');
+  html += renderResultPanel('Encodages', renderTagList(d.by_encoding.map(([enc, count]) => `${enc} · ${count}`), 'Aucun encodage'), 'distribution');
+  if (d.errored.length) {
+    html += renderResultPanel('Erreurs', `<div class="result-list">${d.errored.map((entry) => `<article class="result-list-item"><code>${escapeHtml(entry.path)}</code><span class="table-subline">${escapeHtml(entry.error)}</span></article>`).join('')}</div>`, `${d.errored.length} erreur(s)`);
+  }
+  out.innerHTML = html;
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  restorePlaylistState();
+  bindStatePersistence();
+  clearSensitiveInputs();
+  const hash = window.location.hash || '';
+  if (hash.startsWith('#pl-')) {
+    const target = hash.replace('#pl-', '').trim();
+    if (target) tab(target);
+  }
+});
+</script>
+{% endblock %}

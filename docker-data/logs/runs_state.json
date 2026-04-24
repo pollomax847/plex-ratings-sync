@@ -1,0 +1,282 @@
+{
+  "version": 1,
+  "saved_at": 1777025338.1392193,
+  "runs": [
+    {
+      "run_id": "1777025319-d8e37b",
+      "job_key": "ratings_2star_songrec_only",
+      "cmd": [
+        "python3",
+        "ratings/process_2star_pipeline.py",
+        "--no-beet",
+        "--no-clear"
+      ],
+      "started_at": 1777025319.0552082,
+      "ended_at": 1777025338.1392033,
+      "exit_code": 0,
+      "log_path": "/data/logs/1777025319-d8e37b-ratings_2star_songrec_only.log"
+    },
+    {
+      "run_id": "1777024759-33f31c",
+      "job_key": "ratings_2star_songrec_only",
+      "cmd": [
+        "python3",
+        "ratings/process_2star_pipeline.py",
+        "--no-beet",
+        "--no-clear"
+      ],
+      "started_at": 1777024759.8033438,
+      "ended_at": 1777024760.8640993,
+      "exit_code": 0,
+      "log_path": "/data/logs/1777024759-33f31c-ratings_2star_songrec_only.log"
+    },
+    {
+      "run_id": "1777024738-8cf9d8",
+      "job_key": "status_sync",
+      "cmd": [
+        "bash",
+        "workflows/status_complete_sync.sh"
+      ],
+      "started_at": 1777024738.8065445,
+      "ended_at": 1777024739.1170323,
+      "exit_code": 0,
+      "log_path": "/data/logs/1777024738-8cf9d8-status_sync.log"
+    },
+    {
+      "run_id": "1777020337-3b6092",
+      "job_key": "ratings_clear_2stars",
+      "cmd": [
+        "python3",
+        "ratings/clear_2star_ratings_api.py"
+      ],
+      "started_at": 1777020337.0993366,
+      "ended_at": 1777020337.587188,
+      "exit_code": 1,
+      "log_path": "/data/logs/1777020337-3b6092-ratings_clear_2stars.log"
+    },
+    {
+      "run_id": "1777020308-660f56",
+      "job_key": "ratings_2star_pipeline",
+      "cmd": [
+        "python3",
+        "ratings/process_2star_pipeline.py"
+      ],
+      "started_at": 1777020308.9287474,
+      "ended_at": 1777020309.4313314,
+      "exit_code": 0,
+      "log_path": "/data/logs/1777020308-660f56-ratings_2star_pipeline.log"
+    },
+    {
+      "run_id": "1777020272-b746e1",
+      "job_key": "ratings_2star_pipeline_sim",
+      "cmd": [
+        "python3",
+        "ratings/process_2star_pipeline.py",
+        "--dry-run"
+      ],
+      "started_at": 1777020272.2746575,
+      "ended_at": 1777020272.9572508,
+      "exit_code": 0,
+      "log_path": "/data/logs/1777020272-b746e1-ratings_2star_pipeline_sim.log"
+    },
+    {
+      "run_id": "1777018172-2def1b",
+      "job_key": "playlist-import-youtube",
+      "cmd": [
+        "python3",
+        "playlists/import_itunes_playlists_to_plex.py",
+        "--source-dir",
+        "/playlists",
+        "--plex-db",
+        "/plex/Plug-in Support/Databases/com.plexapp.plugins.library.db",
+        "--plex-url",
+        "http://host.docker.internal:32400",
+        "--plex-token",
+        "WQQySxr3SBPY-Sn77Yuk",
+        "--apply",
+        "--replace"
+      ],
+      "started_at": 1777018172.16005,
+      "ended_at": 1777018223.8466027,
+      "exit_code": 0,
+      "log_path": "/data/logs/1777018172-2def1b-playlist-import-youtube.log"
+    },
+    {
+      "run_id": "1777015549-459041",
+      "job_key": "playlist-import-youtube",
+      "cmd": [
+        "python3",
+        "playlists/import_itunes_playlists_to_plex.py",
+        "--source-dir",
+        "/playlists",
+        "--plex-url",
+        "http://host.docker.internal:32400",
+        "--plex-token",
+        "WQQySxr3SBPY-Sn77Yuk",
+        "--apply",
+        "--replace"
+      ],
+      "started_at": 1777015549.7299004,
+      "ended_at": 1777015550.409989,
+      "exit_code": 1,
+      "log_path": "/data/logs/1777015549-459041-playlist-import-youtube.log"
+    },
+    {
+      "run_id": "1776973799-84121d",
+      "job_key": "playlists_auto",
+      "cmd": [
+        "python3",
+        "playlists/auto_playlists_plexamp.py"
+      ],
+      "started_at": 1776973799.958633,
+      "ended_at": 1776974376.1452172,
+      "exit_code": 0,
+      "log_path": "/data/logs/1776973799-84121d-playlists_auto.log"
+    },
+    {
+      "run_id": "1776973369-daa6a1",
+      "job_key": "playlists_auto",
+      "cmd": [
+        "python3",
+        "playlists/auto_playlists_plexamp.py"
+      ],
+      "started_at": 1776973369.7783327,
+      "ended_at": 1776973799.7126482,
+      "exit_code": -2,
+      "log_path": "/data/logs/1776973369-daa6a1-playlists_auto.log"
+    },
+    {
+      "run_id": "1776973234-d896fb",
+      "job_key": "status_sync",
+      "cmd": [
+        "bash",
+        "workflows/status_complete_sync.sh"
+      ],
+      "started_at": 1776973234.1720905,
+      "ended_at": 1776973234.4911692,
+      "exit_code": 0,
+      "log_path": "/data/logs/1776973234-d896fb-status_sync.log"
+    },
+    {
+      "run_id": "1776973122-979d6b",
+      "job_key": "status_sync",
+      "cmd": [
+        "bash",
+        "workflows/status_complete_sync.sh"
+      ],
+      "started_at": 1776973122.1364896,
+      "ended_at": 1776973122.3149137,
+      "exit_code": 1,
+      "log_path": "/data/logs/1776973122-979d6b-status_sync.log"
+    },
+    {
+      "run_id": "1776973090-5f6855",
+      "job_key": "playlists_gen",
+      "cmd": [
+        "bash",
+        "playlists/generate_plexamp_playlists.sh"
+      ],
+      "started_at": 1776973090.444153,
+      "ended_at": 1776973149.6881363,
+      "exit_code": -2,
+      "log_path": "/data/logs/1776973090-5f6855-playlists_gen.log"
+    },
+    {
+      "run_id": "1776972977-1f39e6",
+      "job_key": "playlists_gen",
+      "cmd": [
+        "bash",
+        "playlists/generate_plexamp_playlists.sh"
+      ],
+      "started_at": 1776972977.100501,
+      "ended_at": 1776973090.172107,
+      "exit_code": -2,
+      "log_path": "/data/logs/1776972977-1f39e6-playlists_gen.log"
+    },
+    {
+      "run_id": "1776972948-28fb30",
+      "job_key": "status_sync",
+      "cmd": [
+        "bash",
+        "workflows/status_complete_sync.sh"
+      ],
+      "started_at": 1776972948.5294223,
+      "ended_at": 1776972948.761993,
+      "exit_code": 0,
+      "log_path": "/data/logs/1776972948-28fb30-status_sync.log"
+    },
+    {
+      "run_id": "1776972934-2f1723",
+      "job_key": "ratings_clean",
+      "cmd": [
+        "bash",
+        "ratings/plex_clean_ratings.sh",
+        "--dry-run"
+      ],
+      "started_at": 1776972934.341878,
+      "ended_at": 1776972934.4737024,
+      "exit_code": 0,
+      "log_path": "/data/logs/1776972934-2f1723-ratings_clean.log"
+    },
+    {
+      "run_id": "1776972906-cca7b9",
+      "job_key": "ratings_sync_id3",
+      "cmd": [
+        "bash",
+        "ratings/plex_ratings_sync.sh"
+      ],
+      "started_at": 1776972906.9975853,
+      "ended_at": 1776972910.6840625,
+      "exit_code": 0,
+      "log_path": "/data/logs/1776972906-cca7b9-ratings_sync_id3.log"
+    },
+    {
+      "run_id": "1776972830-7be5b1",
+      "job_key": "playlists_gen",
+      "cmd": [
+        "bash",
+        "playlists/generate_plexamp_playlists.sh"
+      ],
+      "started_at": 1776972830.2797055,
+      "ended_at": 1776972833.3791027,
+      "exit_code": -2,
+      "log_path": "/data/logs/1776972830-7be5b1-playlists_gen.log"
+    },
+    {
+      "run_id": "1776972752-90623c",
+      "job_key": "playlists_auto",
+      "cmd": [
+        "python3",
+        "playlists/auto_playlists_plexamp.py"
+      ],
+      "started_at": 1776972752.129218,
+      "ended_at": 1776972833.3791027,
+      "exit_code": -2,
+      "log_path": "/data/logs/1776972752-90623c-playlists_auto.log"
+    },
+    {
+      "run_id": "1776964927-a378fa",
+      "job_key": "playlists_gen",
+      "cmd": [
+        "bash",
+        "playlists/generate_plexamp_playlists.sh"
+      ],
+      "started_at": 1776964927.4264283,
+      "ended_at": 1776964927.4639914,
+      "exit_code": 1,
+      "log_path": "/data/logs/1776964927-a378fa-playlists_gen.log"
+    },
+    {
+      "run_id": "1776964899-d54e92",
+      "job_key": "playlists_auto",
+      "cmd": [
+        "python3",
+        "playlists/auto_playlists_plexamp.py"
+      ],
+      "started_at": 1776964899.8064766,
+      "ended_at": 1776964899.8557582,
+      "exit_code": 2,
+      "log_path": "/data/logs/1776964899-d54e92-playlists_auto.log"
+    }
+  ]
+}

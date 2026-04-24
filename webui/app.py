@@ -1,0 +1,1737 @@
+#!/usr/bin/env python3
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownLambdaType=false, reportUnknownParameterType=false, reportMissingTypeArgument=false, reportOptionalMemberAccess=false, reportUnusedImport=false, reportUnusedFunction=false, reportPrivateUsage=false
+"""
+app.py — Tableau de bord Flask + HTMX pour la suite de scripts Plex/iTunes/audio.
+
+Fonctionnalités :
+- Tuiles : Ratings, Workflows, Playlists, iTunes, Logs
+- Lancement de jobs (scripts bash/python) avec capture de stdout/stderr en live
+- Visualiseur de logs avec tail -f
+- Outils playlists (scan/analyze/match/plex/stats) via playlist_detector
+- Navigateur des playlists Plex
+
+Lancement (dev) :
+    cd /app && python3 webui/app.py
+Lancement (prod, dans le conteneur) :
+    gunicorn -b 0.0.0.0:8765 -w 2 webui.app:app
+
+Variables d'env :
+    WEBUI_PORT         Port d'écoute (défaut 8765)
+    WEBUI_HOST         Interface (défaut 0.0.0.0)
+    WEBUI_SECRET       Secret Flask (défaut aléatoire)
+    WEBUI_TOKEN        Si défini, exige ?token=XXX sur toutes les routes
+    PROJECT_ROOT       Racine du projet (défaut parent de webui/)
+    LOGS_DIR           Répertoire des logs (défaut /data/logs ou $PROJECT_ROOT/logs)
+    PLEX_URL / PLEX_TOKEN  Transmis aux commandes Plex
+"""
+
+from __future__ import annotations
+
+import atexit
+import csv
+import io
+import json
+import os
+import re
+import secrets
+import sqlite3
+import subprocess
+import sys
+import threading
+import time
+import urllib.parse
+import urllib.request
+import uuid
+import xml.etree.ElementTree as ET
+from collections import deque
+from dataclasses import dataclass, field, asdict
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Optional
+
+from flask import (
+    Flask, Response, abort, jsonify, redirect, render_template,
+    request, stream_with_context, url_for,
+)
+from werkzeug.middleware.proxy_fix import ProxyFix
+
+# ---------------------------------------------------------------------------
+# Chemins & config
+# ---------------------------------------------------------------------------
+HERE = Path(__file__).resolve().parent
+PROJECT_ROOT = Path(os.environ.get("PROJECT_ROOT", HERE.parent)).resolve()
+sys.path.insert(0, str(PROJECT_ROOT / "playlists"))
+
+LOGS_DIR = Path(os.environ.get(
+    "LOGS_DIR",
+    "/data/logs" if Path("/data/logs").exists() or Path("/data").exists()
+    else PROJECT_ROOT / "logs",
+))
+LOGS_DIR.mkdir(parents=True, exist_ok=True)
+RUNS_STATE_FILE = LOGS_DIR / "runs_state.json"
+
+PLEX_DB_CANDIDATES = [
+    "/plex/Plug-in Support/Databases/com.plexapp.plugins.library.db",
+    "/var/snap/plexmediaserver/common/Library/Application Support/Plex Media Server/Plug-in Support/Databases/com.plexapp.plugins.library.db",
+    "/var/lib/plexmediaserver/Library/Application Support/Plex Media Server/Plug-in Support/Databases/com.plexapp.plugins.library.db",
+    str(Path("~/.config/Plex Media Server/Plug-in Support/Databases/com.plexapp.plugins.library.db").expanduser()),
+]
+
+# Import optionnel du détecteur de playlists (peut être absent)
+try:
+    import playlist_detector as pld  # type: ignore[import-not-found]
+except Exception as exc:  # pragma: no cover
+    pld = None
+    _pld_err = repr(exc)
+else:
+    _pld_err = None
+
+
+def _new_log_buffer() -> deque[str]:
+    return deque(maxlen=5000)
+
+
+# ---------------------------------------------------------------------------
+# Catalogue des jobs : mapping nom → commande + description + tuile
+# ---------------------------------------------------------------------------
+@dataclass(frozen=True)
+class JobDef:
+    key: str
+    title: str
+    desc: str
+    cmd: list[str]
+    category: str
+    icon: str = "▶"
+
+
+JOBS: dict[str, JobDef] = {j.key: j for j in [
+    # Ratings
+    JobDef("ratings_sync", "Sync ratings Plex → ID3",
+           "Synchronise les notes Plex vers les tags ID3",
+           ["python3", "ratings/plex_rating_sync_complete.py"],
+           "ratings", "⭐"),
+    JobDef("ratings_sync_id3", "Sync ratings (script legacy)",
+           "Version bash historique",
+           ["bash", "ratings/plex_ratings_sync.sh"],
+           "ratings", "⭐"),
+        JobDef("ratings_2star_pipeline", "🎵 Pipeline 2★ (songrec → beet → clear)",
+            "songrec-rename -i (ou fallback songrec en Docker) → beet import (classe dans Music) "
+            "→ efface le rating 2★ dans Plex.",
+            ["python3", "ratings/process_2star_pipeline.py"],
+            "ratings", "🎵"),
+        JobDef("ratings_2star_pipeline_sim", "🔎 Simuler pipeline 2★",
+            "Affiche les tracks 2★ et les commandes qui seraient lancées (aucune modification).",
+            ["python3", "ratings/process_2star_pipeline.py", "--dry-run"],
+            "ratings", "🔎"),
+        JobDef("ratings_2star_songrec_only", "🎤 2★ → songrec-rename -i uniquement",
+            "Identification Shazam + tags ID3 sans beet ni effacement du rating "
+            "(fallback songrec si songrec-rename absent).",
+            ["python3", "ratings/process_2star_pipeline.py", "--no-beet", "--no-clear"],
+            "ratings", "🎤"),
+        JobDef("ratings_clear_2stars", "🧹 Effacer ratings 2★ (API seule)",
+            "Efface uniquement les ratings 2★ dans Plex via API — à utiliser après songrec+beet manuels.",
+            ["python3", "ratings/clear_2star_ratings_api.py"],
+            "ratings", "🧹"),
+
+    # Workflows
+    JobDef("daily", "Workflow quotidien",
+           "Détection 1★/2★ + rapport + notifications",
+           ["bash", "workflows/plex_daily_workflow.sh"],
+           "workflows", "📅"),
+    JobDef("status_sync", "Statut sync complet",
+           "Rapport de synchronisation global",
+           ["bash", "workflows/status_complete_sync.sh"],
+           "workflows", "📊"),
+
+    # Playlists
+    JobDef("playlists_auto", "Générer playlists auto (Plexamp)",
+           "Auto playlists basées sur ratings & écoutes",
+           ["python3", "playlists/auto_playlists_plexamp.py"],
+           "playlists", "🎶"),
+    JobDef("playlists_gen", "Shell playlists Plexamp",
+           "Script bash d'orchestration Plexamp",
+           ["bash", "playlists/generate_plexamp_playlists.sh"],
+           "playlists", "🎶"),
+    JobDef("playlists_sync_mybook", "Sync playlists → MyBook",
+           "Copie les M3U vers /mnt/MyBook",
+           ["bash", "playlists/sync_plex_playlists_to_mybook.sh"],
+           "playlists", "💾"),
+    JobDef("playlists_sync_m3u", "Sync M3U disque ↔ Plex",
+           "Synchronise les M3U vers Plex",
+           ["python3", "playlists/sync_m3u_playlists.py"],
+           "playlists", "🔁"),
+
+    # iTunes
+    JobDef("itunes_analyze", "Analyser bibliothèque iTunes",
+           "Statistiques iTunes XML",
+           ["python3", "itunes/itunes_analyzer.py"],
+           "itunes", "📀"),
+    JobDef("itunes_update", "Mettre à jour iTunes XML",
+           "Scan + régénération XML",
+           ["python3", "itunes/update_itunes.py"],
+           "itunes", "🔄"),
+]}
+
+
+# ---------------------------------------------------------------------------
+# Runner : exécute un job en arrière-plan et stream son output
+# ---------------------------------------------------------------------------
+@dataclass
+class JobRun:
+    run_id: str
+    job_key: str
+    cmd: list[str]
+    started_at: float
+    ended_at: Optional[float] = None
+    exit_code: Optional[int] = None
+    lines: deque[str] = field(default_factory=_new_log_buffer)
+    done: threading.Event = field(default_factory=threading.Event)
+    proc: Optional[subprocess.Popen[str]] = None
+    log_path: Optional[str] = None
+
+    @property
+    def status(self) -> str:
+        if not self.done.is_set():
+            return "running"
+        if self.exit_code == 0:
+            return "success"
+        return "failed"
+
+    def to_public(self) -> dict[str, Any]:
+        return {
+            "run_id": self.run_id,
+            "job_key": self.job_key,
+            "cmd": self.cmd,
+            "started_at": self.started_at,
+            "ended_at": self.ended_at,
+            "exit_code": self.exit_code,
+            "status": self.status,
+            "duration": round((self.ended_at or time.time()) - self.started_at, 1),
+            "line_count": len(self.lines),
+        }
+
+
+class Runner:
+    def __init__(self, logs_dir: Path, max_keep: int = 50):
+        self.logs_dir = logs_dir
+        self.state_file = RUNS_STATE_FILE
+        self.runs: dict[str, JobRun] = {}
+        self._lock = threading.Lock()
+        self._max = max_keep
+        self._load_state()
+
+    def _tail_log_lines(self, log_path: Path, max_lines: int = 3000) -> list[str]:
+        if not log_path.is_file():
+            return []
+        try:
+            with log_path.open("r", encoding="utf-8", errors="replace") as f:
+                return [line.rstrip("\n") for line in deque(f, maxlen=max_lines)]
+        except Exception:
+            return []
+
+    def _run_to_state(self, run: JobRun) -> dict[str, Any]:
+        return {
+            "run_id": run.run_id,
+            "job_key": run.job_key,
+            "cmd": run.cmd,
+            "started_at": run.started_at,
+            "ended_at": run.ended_at,
+            "exit_code": run.exit_code,
+            "log_path": run.log_path,
+        }
+
+    def _save_state_locked(self) -> None:
+        payload = {
+            "version": 1,
+            "saved_at": time.time(),
+            "runs": [self._run_to_state(r) for r in self.list_runs()],
+        }
+        tmp = self.state_file.with_suffix(".json.tmp")
+        try:
+            with tmp.open("w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+            tmp.replace(self.state_file)
+        except Exception:
+            try:
+                tmp.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+    def _save_state(self) -> None:
+        with self._lock:
+            self._save_state_locked()
+
+    def _load_state(self) -> None:
+        if not self.state_file.is_file():
+            return
+        try:
+            data = json.loads(self.state_file.read_text(encoding="utf-8"))
+        except Exception:
+            return
+        now = time.time()
+        restored: dict[str, JobRun] = {}
+        for item in data.get("runs", []):
+            try:
+                run = JobRun(
+                    run_id=str(item["run_id"]),
+                    job_key=str(item["job_key"]),
+                    cmd=list(item.get("cmd") or []),
+                    started_at=float(item.get("started_at") or now),
+                    ended_at=(float(item["ended_at"]) if item.get("ended_at") is not None else None),
+                    exit_code=(int(item["exit_code"]) if item.get("exit_code") is not None else None),
+                    log_path=item.get("log_path"),
+                )
+            except Exception:
+                continue
+
+            # Recharge un extrait de sortie depuis le fichier de log pour l'affichage après redémarrage.
+            if run.log_path:
+                for line in self._tail_log_lines(Path(run.log_path), max_lines=5000):
+                    run.lines.append(line)
+
+            if run.ended_at is None:
+                run.ended_at = now
+                run.exit_code = -2
+                run.lines.append("⚠ Run interrompu par un redémarrage du service webui.")
+            run.done.set()
+            restored[run.run_id] = run
+
+        # Garde seulement les plus récents selon la politique max_keep.
+        self.runs = {
+            r.run_id: r
+            for r in sorted(restored.values(), key=lambda x: x.started_at, reverse=True)[: self._max]
+        }
+
+    def launch(self, job_key: str, extra_args: list[str] | None = None) -> JobRun:
+        jd = JOBS.get(job_key)
+        if not jd:
+            raise KeyError(f"job inconnu: {job_key}")
+        cmd = list(jd.cmd) + list(extra_args or [])
+        return self._run_cmd(job_key, cmd)
+
+    def launch_custom(self, job_key: str, cmd: list[str]) -> JobRun:
+        return self._run_cmd(job_key, cmd)
+
+    def _run_cmd(self, job_key: str, cmd: list[str]) -> JobRun:
+        run_id = f"{int(time.time())}-{uuid.uuid4().hex[:6]}"
+        run = JobRun(run_id=run_id, job_key=job_key, cmd=cmd, started_at=time.time())
+        with self._lock:
+            self.runs[run_id] = run
+            # garbage collect
+            if len(self.runs) > self._max:
+                old = sorted(self.runs.values(), key=lambda r: r.started_at)[: -self._max]
+                for r in old:
+                    if r.done.is_set():
+                        self.runs.pop(r.run_id, None)
+            self._save_state_locked()
+
+        log_path = self.logs_dir / f"{run_id}-{job_key}.log"
+        run.log_path = str(log_path)
+        self._save_state()
+
+        def target():
+            env = os.environ.copy()
+            env["PYTHONUNBUFFERED"] = "1"
+            try:
+                run.proc = subprocess.Popen(
+                    cmd,
+                    cwd=PROJECT_ROOT,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    bufsize=1,
+                    text=True,
+                    env=env,
+                )
+            except Exception as exc:
+                run.lines.append(f"❌ Échec du lancement : {exc}")
+                run.exit_code = -1
+                run.ended_at = time.time()
+                run.done.set()
+                return
+
+            with log_path.open("w", encoding="utf-8") as flog:
+                assert run.proc.stdout
+                _ansi_re = __import__("re").compile(r"\x1b\[[0-9;]*[mKHJABCDsu]")
+                for line in run.proc.stdout:
+                    line = _ansi_re.sub("", line.rstrip("\n"))
+                    run.lines.append(line)
+                    flog.write(line + "\n")
+                    flog.flush()
+            run.proc.wait()
+            run.exit_code = run.proc.returncode
+            run.ended_at = time.time()
+            run.done.set()
+            self._save_state()
+
+        threading.Thread(target=target, daemon=True, name=f"job-{run_id}").start()
+        return run
+
+    def get(self, run_id: str) -> Optional[JobRun]:
+        return self.runs.get(run_id)
+
+    def list_runs(self) -> list[JobRun]:
+        return sorted(self.runs.values(), key=lambda r: r.started_at, reverse=True)
+
+    def running_runs(self) -> list[JobRun]:
+        return [r for r in self.runs.values() if not r.done.is_set()]
+
+    def kill(self, run_id: str) -> bool:
+        r = self.get(run_id)
+        if r and r.proc and not r.done.is_set():
+            r.proc.terminate()
+            return True
+        return False
+
+
+runner = Runner(LOGS_DIR)
+
+
+def _cleanup():
+    for r in runner.runs.values():
+        if r.proc and not r.done.is_set():
+            try:
+                r.proc.terminate()
+            except Exception:
+                pass
+
+
+atexit.register(_cleanup)
+
+
+# ---------------------------------------------------------------------------
+# Flask app
+# ---------------------------------------------------------------------------
+app = Flask(__name__, template_folder=str(HERE / "templates"),
+            static_folder=str(HERE / "static"))
+app.secret_key = os.environ.get("WEBUI_SECRET") or secrets.token_hex(16)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)  # type: ignore[assignment]
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=os.environ.get("WEBUI_COOKIE_SECURE", "1") != "0",
+)
+
+
+@app.template_filter("fmt_ts")
+def fmt_ts(value: Any) -> str:
+    try:
+        return datetime.fromtimestamp(float(value)).strftime("%d/%m/%Y %H:%M:%S")
+    except Exception:
+        return str(value)
+
+
+def _mask_secret(value: str) -> str:
+    if not value:
+        return ""
+    if len(value) <= 8:
+        return value[:2] + "…"
+    return f"{value[:4]}…{value[-4:]}"
+
+
+def _path_snapshot(path_str: str) -> dict[str, Any]:
+    path = Path(path_str).expanduser()
+    exists = path.exists()
+    info: dict[str, Any] = {
+        "path": str(path),
+        "exists": exists,
+        "kind": "missing",
+        "readable": False,
+        "writable": False,
+        "size": None,
+        "entries": None,
+    }
+    if not exists:
+        return info
+    info["kind"] = "dir" if path.is_dir() else "file"
+    info["readable"] = os.access(path, os.R_OK)
+    info["writable"] = os.access(path, os.W_OK)
+    try:
+        stat = path.stat()
+        info["size"] = stat.st_size
+    except OSError:
+        pass
+    if path.is_dir():
+        try:
+            info["entries"] = len(list(path.iterdir()))
+        except OSError:
+            info["entries"] = None
+    return info
+
+
+def _scan_plex_preferences() -> dict[str, Any]:
+    # Si le token est déjà injecté via variable d'environnement, on l'utilise directement
+    env_token = os.environ.get("PLEX_TOKEN", "").strip()
+    if env_token:
+        return {
+            "found": True,
+            "token": env_token,
+            "url": os.environ.get("PLEX_URL", "http://host.docker.internal:32400"),
+            "source": "variable d'environnement PLEX_TOKEN",
+            "tried": [],
+        }
+
+    candidates = [
+        "/plex/Preferences.xml",
+        "/var/snap/plexmediaserver/common/Library/Application Support/Plex Media Server/Preferences.xml",
+        "/var/lib/plexmediaserver/Library/Application Support/Plex Media Server/Preferences.xml",
+        "/config/Library/Application Support/Plex Media Server/Preferences.xml",
+        str(Path("~/.var/app/tv.plex.PlexMediaServer/config/Library/Application Support/Plex Media Server/Preferences.xml").expanduser()),
+        str(Path("~/Library/Application Support/Plex Media Server/Preferences.xml").expanduser()),
+    ]
+    token_re = re.compile(r'PlexOnlineToken="([^"]+)"')
+    url_re = re.compile(r'customConnections="([^"]+)"')
+    tried: list[dict[str, Any]] = []
+    for path in candidates:
+        p = Path(path)
+        info: dict[str, Any] = {"path": path, "exists": p.exists()}
+        try:
+            if p.is_file():
+                txt = p.read_text(encoding="utf-8", errors="replace")
+                m = token_re.search(txt)
+                if m:
+                    mu = url_re.search(txt)
+                    url = (mu.group(1).split(",")[0] if mu else
+                           os.environ.get("PLEX_URL", "http://host.docker.internal:32400"))
+                    return {
+                        "found": True,
+                        "token": m.group(1),
+                        "url": url,
+                        "source": path,
+                        "tried": tried,
+                    }
+                info["note"] = "fichier lu, mais pas de PlexOnlineToken"
+        except PermissionError:
+            info["note"] = "permission refusée (fichier appartient à root)"
+        except Exception as exc:
+            info["note"] = f"erreur: {exc}"
+        tried.append(info)
+    return {
+        "found": False,
+        "tried": tried,
+        "hint": "Monte Preferences.xml dans le conteneur, ex: "
+                "-v '/var/snap/plexmediaserver/common/.../Plex Media Server':/plex:ro "
+                "(ou utilise sudo utils/detect_plex_token.py --write-env .env sur l'hôte)",
+    }
+
+
+def _find_plex_db() -> Optional[str]:
+    for candidate in PLEX_DB_CANDIDATES:
+        if Path(candidate).is_file():
+            return candidate
+    return None
+
+
+def _summarize_run(run: JobRun) -> dict[str, Any]:
+    lines = list(run.lines)
+    lowered_error = ("error", "erreur", "failed", "traceback", "permission denied", "❌")
+    lowered_success = ("success", "succès", "terminé", "completed", "done", "✓", "✅")
+    error_lines = [line for line in lines if any(marker in line.lower() for marker in lowered_error if marker.isascii()) or any(marker in line for marker in ("❌",))]
+    success_lines = [line for line in lines if any(marker in line.lower() for marker in lowered_success if marker.isascii()) or any(marker in line for marker in ("✓", "✅"))]
+    return {
+        "line_count": len(lines),
+        "last_line": lines[-1] if lines else None,
+        "error_lines": error_lines[-3:],
+        "success_lines": success_lines[-3:],
+    }
+
+
+@app.before_request
+def _auth_gate():
+    tok = os.environ.get("WEBUI_TOKEN")
+    if not tok:
+        return None
+    if request.path.startswith("/static"):
+        return None
+    query_token = request.args.get("token", "")
+    header_token = request.headers.get("X-Token", "")
+    auth_header = request.headers.get("Authorization", "")
+    bearer_token = auth_header[7:].strip() if auth_header.startswith("Bearer ") else ""
+    if any(secrets.compare_digest(candidate, tok) for candidate in (query_token, header_token, bearer_token) if candidate):
+        return None
+    abort(401)
+
+
+@app.before_request
+def _force_https():
+    if os.environ.get("WEBUI_ENFORCE_HTTPS", "0") != "1":
+        return None
+    if request.path.startswith("/static"):
+        return None
+    if request.is_secure or request.headers.get("X-Forwarded-Proto", "").lower() == "https":
+        return None
+    https_url = request.url.replace("http://", "https://", 1)
+    return redirect(https_url, code=301)
+
+
+@app.after_request
+def _security_headers(response: Response) -> Response:
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    response.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+    response.headers.setdefault("Cache-Control", "no-store")
+    if request.is_secure or request.headers.get("X-Forwarded-Proto", "").lower() == "https":
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    return response
+
+
+@app.context_processor
+def _ctx() -> dict[str, Any]:
+    categories = sorted({j.category for j in JOBS.values()})
+    return {
+        "categories": categories,
+        "jobs_by_cat": {c: [j for j in JOBS.values() if j.category == c] for c in categories},
+        "jobs_map": JOBS,
+        "pld_available": pld is not None,
+        "pld_err": _pld_err,
+        "project_root": str(PROJECT_ROOT),
+        "docker_mode": Path("/.dockerenv").exists(),
+    }
+
+
+# -------------------- Pages --------------------
+@app.route("/")
+def index():
+    # Derniers runs, agrégats
+    runs = runner.list_runs()[:10]
+    stats = {
+        "running": sum(1 for r in runner.runs.values() if not r.done.is_set()),
+        "success": sum(1 for r in runner.runs.values() if r.status == "success"),
+        "failed": sum(1 for r in runner.runs.values() if r.status == "failed"),
+        "total_jobs": len(JOBS),
+    }
+    return render_template("index.html", runs=runs, stats=stats)
+
+
+@app.route("/jobs")
+def jobs_page():
+    return render_template("jobs.html", runs=runner.list_runs())
+
+
+@app.route("/job/<run_id>")
+def job_page(run_id: str):
+    run = runner.get(run_id)
+    if not run:
+        return redirect(url_for("jobs_page", missing_run=run_id))
+    return render_template("job.html", run=run, job=JOBS.get(run.job_key), summary=_summarize_run(run))
+
+
+@app.route("/config")
+def config_page():
+    config_rows = [
+        {"label": "Mode d'exécution", "value": "Docker" if Path("/.dockerenv").exists() else "Host", "secret": False},
+        {"label": "PLEX_URL", "value": os.environ.get("PLEX_URL", ""), "secret": False},
+        {"label": "PLEX_TOKEN", "value": _mask_secret(os.environ.get("PLEX_TOKEN", "")), "secret": True},
+        {"label": "AUDIO_LIBRARY", "value": os.environ.get("AUDIO_LIBRARY", "/music"), "secret": False},
+        {"label": "PLAYLISTS_DIR", "value": os.environ.get("PLAYLISTS_DIR", "/playlists"), "secret": False},
+        {"label": "LOGS_DIR", "value": str(LOGS_DIR), "secret": False},
+        {"label": "PROJECT_ROOT", "value": str(PROJECT_ROOT), "secret": False},
+    ]
+    mounts = [
+        _path_snapshot("/plex"),
+        _path_snapshot("/plex/Preferences.xml"),
+        _path_snapshot(_find_plex_db() or PLEX_DB_CANDIDATES[0]),
+        _path_snapshot(os.environ.get("AUDIO_LIBRARY", "/music")),
+        _path_snapshot(os.environ.get("PLAYLISTS_DIR", "/playlists")),
+        _path_snapshot(str(LOGS_DIR)),
+    ]
+    return render_template(
+        "config.html",
+        config_rows=config_rows,
+        mounts=mounts,
+        plex_detect=_scan_plex_preferences(),
+    )
+
+
+@app.route("/playlists")
+def playlists_page():
+    # Cherche le dossier de playlists qui contient réellement des fichiers
+    def _has_playlists(p: str) -> bool:
+        if not p:
+            return False
+        d = Path(p)
+        if not d.is_dir():
+            return False
+        return any(d.rglob("*.m3u")) or any(d.rglob("*.m3u8")) or any(d.rglob("*.pls"))
+
+    _pl_candidates = [
+        os.environ.get("PLAYLISTS_DIR", ""),
+        "/music/Playlists",
+        "/music/playlists",
+        "/playlists",
+    ]
+    _pl_default = next((p for p in _pl_candidates if _has_playlists(p)), "/playlists")
+    defaults = {
+        "music": os.environ.get("AUDIO_LIBRARY", "/music"),
+        "playlists": _pl_default,
+        "plex_url": os.environ.get("PLEX_URL", "http://host.docker.internal:32400"),
+        "plex_token": "",
+    }
+    return render_template("playlists.html", defaults=defaults)
+
+
+@app.route("/logs")
+def logs_page():
+    log_files = sorted(LOGS_DIR.glob("*.log"), key=lambda p: p.stat().st_mtime, reverse=True)
+    return render_template("logs.html", logs=log_files[:200], logs_dir=LOGS_DIR)
+
+
+# -------------------- API : détection automatique du token Plex --------------
+@app.get("/api/plex/detect")
+def api_plex_detect():
+    """Tente de lire PlexOnlineToken depuis Preferences.xml (plusieurs chemins)."""
+    return jsonify(_scan_plex_preferences()), 200
+
+
+# -------------------- API : jobs --------------------
+@app.post("/api/run/<job_key>")
+def api_run(job_key: str):
+    if job_key not in JOBS:
+        return jsonify(error="unknown job"), 404
+    extra = request.json.get("args", []) if request.is_json else []
+    run = runner.launch(job_key, extra)
+    return jsonify(run.to_public())
+
+
+@app.post("/api/kill/<run_id>")
+def api_kill(run_id: str):
+    ok = runner.kill(run_id)
+    return jsonify(killed=ok)
+
+
+@app.get("/api/runs")
+def api_runs():
+    return jsonify([r.to_public() for r in runner.list_runs()])
+
+
+@app.get("/api/run/<run_id>")
+def api_run_status(run_id: str):
+    run = runner.get(run_id)
+    if not run:
+        return jsonify(error="unknown"), 404
+    return jsonify(run.to_public())
+
+
+@app.get("/api/run/<run_id>/output")
+def api_run_output(run_id: str):
+    run = runner.get(run_id)
+    if not run:
+        return jsonify(error="unknown"), 404
+    offset = int(request.args.get("offset", 0))
+    lines = list(run.lines)[offset:]
+    return jsonify({
+        "lines": lines,
+        "next_offset": offset + len(lines),
+        "status": run.status,
+        "exit_code": run.exit_code,
+        "duration": round((run.ended_at or time.time()) - run.started_at, 1),
+        "started_at": run.started_at,
+        "ended_at": run.ended_at,
+        "line_count": len(run.lines),
+        "summary": _summarize_run(run),
+    })
+
+
+# -------------------- HTMX partials --------------------
+@app.get("/htmx/run/<run_id>/tail")
+def htmx_run_tail(run_id: str):
+    run = runner.get(run_id)
+    if not run:
+        return "<div class='err'>Run introuvable</div>", 404
+    return render_template("_tail.html", run=run)
+
+
+@app.get("/htmx/runs")
+def htmx_runs():
+    return render_template("_runs_table.html", runs=runner.list_runs())
+
+
+# -------------------- Playlists (detector) --------------------
+def _require_pld():
+    if pld is None:
+        abort(503, description=f"playlist_detector indisponible: {_pld_err}")
+
+
+def _entry_title_key(entry: Any) -> str:
+    artist = (entry.artist or "").strip().casefold()
+    title = (entry.title or "").strip().casefold()
+    if artist or title:
+        return f"{artist}::{title}"
+    return ""
+
+
+def _entry_path_key(entry: Any, playlist_path: Path) -> str:
+    if pld is None:
+        return str(entry.path_or_uri or "").strip().casefold()
+    resolved = getattr(pld, "resolve_entry_path")(entry.path_or_uri, playlist_path)
+    if resolved:
+        try:
+            return str(resolved.resolve()).casefold()
+        except Exception:
+            return str(resolved).casefold()
+    raw = str(entry.path_or_uri or "").strip()
+    return raw.casefold()
+
+
+def _entry_signature(entry: Any, playlist_path: Path) -> tuple[str, str]:
+    return (
+        _entry_path_key(entry, playlist_path),
+        _entry_title_key(entry),
+    )
+
+
+@app.post("/api/playlists/scan")
+def api_pl_scan():
+    _require_pld()
+    data = request.get_json(force=True)
+    root = Path(data.get("path", "/music")).expanduser()
+    if not root.exists():
+        return jsonify(error=f"introuvable: {root}"), 400
+    files = pld.discover_playlists(
+        root,
+        recursive=data.get("recursive", True),
+        max_depth=int(data.get("max_depth", 0)),
+        follow_symlinks=bool(data.get("follow_symlinks", False)),
+    )
+    from collections import Counter
+    by_ext = Counter(f.suffix.lower() for f in files)
+    return jsonify({
+        "count": len(files),
+        "by_ext": by_ext.most_common(),
+        "files": [str(f) for f in files[:500]],
+        "truncated": len(files) > 500,
+    })
+
+
+@app.post("/api/playlists/analyze")
+def api_pl_analyze():
+    _require_pld()
+    data = request.get_json(force=True)
+    raw = (data.get("path") or "").strip()
+    if not raw:
+        return jsonify(error="Chemin vide. Saisissez le chemin complet vers un fichier .m3u/.pls."), 400
+    path = Path(raw).expanduser()
+    if not path.is_file():
+        return jsonify(error=f"Fichier introuvable : {path}"), 400
+    pl = pld.parse_playlist(path)
+    entries = []
+    for e in pl.entries:
+        p = pld.resolve_entry_path(e.path_or_uri, pl.path)
+        entries.append({
+            "path": e.path_or_uri,
+            "resolved": str(p) if p else None,
+            "exists": bool(p and p.exists()),
+            "artist": e.artist, "title": e.title, "duration": e.duration,
+        })
+    return jsonify({
+        "name": pl.name, "format": pl.format, "encoding": pl.encoding,
+        "track_count": pl.track_count, "entries": entries,
+    })
+
+
+@app.post("/api/playlists/match")
+def api_pl_match():
+    _require_pld()
+    data = request.get_json(force=True)
+    raw_path = (data.get("path") or "").strip()
+    raw_lib  = (data.get("library") or "").strip()
+    if not raw_path:
+        return jsonify(error="Chemin de playlist vide. Saisissez le chemin complet vers un fichier .m3u/.pls."), 400
+    if not raw_lib:
+        return jsonify(error="Chemin de bibliothèque vide. Saisissez le dossier racine de votre musique."), 400
+    path    = Path(raw_path).expanduser()
+    library = Path(raw_lib).expanduser()
+    if not path.is_file():
+        return jsonify(error=f"Fichier playlist introuvable : {path}"), 400
+    if not library.is_dir():
+        return jsonify(error=f"Dossier bibliothèque introuvable : {library}"), 400
+
+    index = pld.MusicIndex.build(library, read_tags=bool(data.get("tags", False)))
+    pl = pld.parse_playlist(path)
+    mappings = [tuple(m.split("=", 1)) for m in data.get("map", []) if "=" in m]
+
+    from collections import Counter
+    by_strategy: Counter = Counter()
+    matched, unmatched = [], []
+    for e in pl.entries:
+        r = index.match(e, playlist_path=pl.path, path_mappings=mappings)
+        if r:
+            by_strategy[r.strategy] += 1
+            matched.append({
+                "entry": e.path_or_uri, "title": e.title, "artist": e.artist,
+                "matched": str(r.track.path),
+                "strategy": r.strategy, "confidence": r.confidence,
+            })
+        else:
+            unmatched.append({"entry": e.path_or_uri, "title": e.title, "artist": e.artist})
+
+    return jsonify({
+        "total": pl.track_count,
+        "matched": len(matched),
+        "unmatched": len(unmatched),
+        "rate": (100 * len(matched) / pl.track_count) if pl.track_count else 0,
+        "by_strategy": by_strategy.most_common(),
+        "matched_list": matched[:200],
+        "unmatched_list": unmatched[:200],
+        "library_size": len(index),
+    })
+
+
+@app.post("/api/playlists/plex")
+def api_pl_plex():
+    _require_pld()
+    data = request.get_json(force=True)
+    url = data.get("url") or os.environ.get("PLEX_URL", "http://127.0.0.1:32400")
+    token = data.get("token") or os.environ.get("PLEX_TOKEN", "")
+    if not token:
+        return jsonify(error="PLEX_TOKEN manquant"), 400
+    client = pld.PlexPlaylistClient(url, token)
+    try:
+        playlists = client.list_all(
+            types=tuple(data.get("types", ("audio", "video", "photo"))),
+            include_smart=bool(data.get("include_smart", True)),
+        )
+    except Exception as exc:
+        return jsonify(error=str(exc)), 500
+    playlists.sort(key=lambda p: (p.type, p.title.casefold()))
+    return jsonify([asdict(p) for p in playlists])
+
+
+@app.post("/api/playlists/plex/tracks")
+def api_pl_plex_tracks():
+    _require_pld()
+    data = request.get_json(force=True)
+    rating_key = str(data.get("rating_key") or "").strip()
+    if not rating_key:
+        return jsonify(error="rating_key manquant"), 400
+
+    url = data.get("url") or os.environ.get("PLEX_URL", "http://127.0.0.1:32400")
+    token = data.get("token") or os.environ.get("PLEX_TOKEN", "")
+    if not token:
+        return jsonify(error="PLEX_TOKEN manquant"), 400
+
+    client = pld.PlexPlaylistClient(url, token)
+    try:
+        tracks = client.get_tracks(rating_key)
+    except Exception as exc:
+        return jsonify(error=str(exc)), 500
+
+    total_duration = sum(int(t.get("duration") or 0) for t in tracks)
+    return jsonify({
+        "rating_key": rating_key,
+        "count": len(tracks),
+        "duration_min": round(total_duration / 60, 1),
+        "tracks": tracks,
+    })
+
+
+def _plex_delete_playlist(url: str, token: str, rating_key: str) -> None:
+    req = urllib.request.Request(
+        url=f"{url.rstrip('/')}/playlists/{rating_key}",
+        method="DELETE",
+    )
+    req.add_header("X-Plex-Token", token)
+    with urllib.request.urlopen(req, timeout=30):
+        return
+
+
+def _plex_request(method: str, url: str, token: str) -> bytes:
+    req = urllib.request.Request(url=url, method=method)
+    req.add_header("X-Plex-Token", token)
+    with urllib.request.urlopen(req, timeout=30) as response:
+        return response.read()
+
+
+def _plex_machine_identifier(url: str, token: str) -> str:
+    root = ET.fromstring(_plex_request("GET", f"{url.rstrip('/')}/", token))
+    machine_id = root.attrib.get("machineIdentifier")
+    if not machine_id:
+        raise RuntimeError("machineIdentifier introuvable")
+    return machine_id
+
+
+def _plex_find_playlist_rating_key(url: str, token: str, title: str) -> str | None:
+    root = ET.fromstring(_plex_request("GET", f"{url.rstrip('/')}/playlists", token))
+    for item in root.findall("Playlist") + root.findall("Directory"):
+        if item.attrib.get("playlistType") != "audio":
+            continue
+        if item.attrib.get("title", "").strip().casefold() == title.strip().casefold():
+            return item.attrib.get("ratingKey")
+    return None
+
+
+def _plex_create_audio_playlist(url: str, token: str, title: str, track_ids: list[int], replace: bool) -> None:
+    if replace:
+        existing = _plex_find_playlist_rating_key(url, token, title)
+        if existing:
+            _plex_delete_playlist(url, token, existing)
+
+    if not track_ids:
+        raise RuntimeError("Aucune piste matchée pour créer la playlist")
+
+    machine_id = _plex_machine_identifier(url, token)
+    metadata_csv = ",".join(str(i) for i in track_ids)
+    uri = f"server://{machine_id}/com.plexapp.plugins.library/library/metadata/{metadata_csv}"
+    query = urllib.parse.urlencode({"type": "audio", "title": title, "smart": "0", "uri": uri})
+    _plex_request("POST", f"{url.rstrip('/')}/playlists?{query}", token)
+
+
+def _plex_get_playlist_track_ids(url: str, token: str, rating_key: str) -> list[int]:
+    root = ET.fromstring(_plex_request("GET", f"{url.rstrip('/')}/playlists/{rating_key}/items", token))
+    ids: list[int] = []
+    for item in root.findall("Track") + root.findall("Video") + root.findall("Photo") + root.findall("Metadata"):
+        rk = item.attrib.get("ratingKey", "")
+        if rk.isdigit():
+            ids.append(int(rk))
+    return ids
+
+
+def _normalize_row_keys(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        re.sub(r"[^a-z0-9]+", "", str(k).strip().casefold()): v
+        for k, v in row.items()
+    }
+
+
+def _extract_track_from_row(row: dict[str, Any]) -> dict[str, str] | None:
+    normalized = _normalize_row_keys(row)
+
+    title = str(
+        normalized.get("title")
+        or normalized.get("track")
+        or normalized.get("trackname")
+        or normalized.get("song")
+        or normalized.get("name")
+        or ""
+    ).strip()
+    artist = str(
+        normalized.get("artist")
+        or normalized.get("artists")
+        or normalized.get("mainartist")
+        or normalized.get("creator")
+        or ""
+    ).strip()
+    album = str(
+        normalized.get("album")
+        or normalized.get("release")
+        or ""
+    ).strip()
+
+    if not title:
+        return None
+    return {"title": title, "artist": artist, "album": album}
+
+
+def _parse_soundiiz_content(filename: str, content: str) -> tuple[str, list[dict[str, str]]]:
+    suffix = Path(filename or "playlist.csv").suffix.lower()
+    default_name = Path(filename or "playlist").stem or "playlist"
+
+    if suffix == ".json":
+        raw = json.loads(content)
+        items: list[Any]
+        if isinstance(raw, dict):
+            items = raw.get("tracks") or raw.get("items") or raw.get("songs") or []
+            playlist_name = str(raw.get("name") or raw.get("playlist") or default_name)
+        elif isinstance(raw, list):
+            items = raw
+            playlist_name = default_name
+        else:
+            raise ValueError("Format JSON non supporté")
+
+        tracks: list[dict[str, str]] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            track = _extract_track_from_row(item)
+            if track:
+                tracks.append(track)
+        return playlist_name, tracks
+
+    # CSV par défaut
+    lines = content.splitlines()
+    if lines and lines[0].strip().lower().startswith("sep="):
+        lines = lines[1:]
+    cleaned = "\n".join(lines)
+
+    try:
+        dialect = csv.Sniffer().sniff(cleaned[:2048], delimiters=",;")
+    except Exception:
+        class _Fallback(csv.excel):
+            delimiter = ";" if cleaned.count(";") > cleaned.count(",") else ","
+        dialect = _Fallback
+
+    reader = csv.DictReader(io.StringIO(cleaned), dialect=dialect)
+    tracks = []
+    for row in reader:
+        if not row:
+            continue
+        track = _extract_track_from_row(row)
+        if track:
+            tracks.append(track)
+    return default_name, tracks
+
+
+def _lookup_track_ids_in_plex_db(plex_db: str, tracks: list[dict[str, str]]) -> tuple[list[int], int]:
+    conn = sqlite3.connect(plex_db)
+    conn.create_collation('icu_root', lambda a, b: (a > b) - (a < b))
+    conn.text_factory = lambda b: b.decode('utf-8', errors='replace')
+    matched_ids: list[int] = []
+    unmatched = 0
+    try:
+        cur = conn.cursor()
+        for track in tracks:
+            title = track.get("title", "").strip()
+            artist = track.get("artist", "").strip()
+            if not title:
+                unmatched += 1
+                continue
+
+            row = None
+            if artist:
+                cur.execute(
+                    """
+                    SELECT mi.id
+                    FROM metadata_items mi
+                    LEFT JOIN metadata_items parent_mi ON mi.parent_id = parent_mi.id
+                    LEFT JOIN metadata_items grandparent_mi ON parent_mi.parent_id = grandparent_mi.id
+                    WHERE mi.metadata_type = 10
+                      AND LOWER(mi.title) = LOWER(?)
+                      AND LOWER(grandparent_mi.title) = LOWER(?)
+                    LIMIT 1
+                    """,
+                    (title, artist),
+                )
+                row = cur.fetchone()
+
+            if row is None:
+                cur.execute(
+                    """
+                    SELECT mi.id
+                    FROM metadata_items mi
+                    WHERE mi.metadata_type = 10
+                      AND LOWER(mi.title) = LOWER(?)
+                    LIMIT 1
+                    """,
+                    (title,),
+                )
+                row = cur.fetchone()
+
+            if row is None and artist:
+                cur.execute(
+                    """
+                    SELECT mi.id
+                    FROM metadata_items mi
+                    LEFT JOIN metadata_items parent_mi ON mi.parent_id = parent_mi.id
+                    LEFT JOIN metadata_items grandparent_mi ON parent_mi.parent_id = grandparent_mi.id
+                    WHERE mi.metadata_type = 10
+                      AND LOWER(mi.title) LIKE LOWER(?)
+                      AND LOWER(grandparent_mi.title) LIKE LOWER(?)
+                    LIMIT 1
+                    """,
+                    (f"%{title}%", f"%{artist}%"),
+                )
+                row = cur.fetchone()
+
+            if row is None:
+                unmatched += 1
+            else:
+                matched_ids.append(int(row[0]))
+    finally:
+        conn.close()
+
+    return matched_ids, unmatched
+
+
+@app.post("/api/playlists/plex/delete")
+def api_pl_plex_delete():
+    _require_pld()
+    data = request.get_json(force=True)
+    url = (data.get("url") or os.environ.get("PLEX_URL", "http://127.0.0.1:32400")).strip()
+    token = (data.get("token") or os.environ.get("PLEX_TOKEN", "")).strip()
+    rating_key = str(data.get("rating_key") or "").strip()
+    playlist_name = str(data.get("playlist_name") or "").strip()
+
+    if not token:
+        return jsonify(error="PLEX_TOKEN manquant"), 400
+    if not rating_key and not playlist_name:
+        return jsonify(error="rating_key ou playlist_name requis"), 400
+
+    try:
+        if not rating_key:
+            client = pld.PlexPlaylistClient(url, token)
+            playlists = client.list_all(types=("audio", "video", "photo"), include_smart=True)
+            matches = [p for p in playlists if p.title.casefold() == playlist_name.casefold()]
+            if not matches:
+                return jsonify(error=f"Playlist introuvable: {playlist_name}"), 404
+            if len(matches) > 1:
+                return jsonify(
+                    error=f"Nom ambigu: {playlist_name}",
+                    candidates=[asdict(p) for p in matches],
+                ), 409
+            rating_key = matches[0].rating_key
+            playlist_name = matches[0].title
+
+        _plex_delete_playlist(url, token, rating_key)
+    except Exception as exc:
+        return jsonify(error=str(exc)), 500
+
+    return jsonify(ok=True, rating_key=rating_key, playlist_name=playlist_name)
+
+
+@app.post("/api/playlists/import/run")
+def api_pl_import_run():
+    data = request.get_json(force=True)
+    source = str(data.get("source") or "spotify").strip().lower()
+    destination = str(data.get("destination") or "").strip()
+    mode = str(data.get("mode") or "replace").strip().lower()
+    url = (data.get("url") or os.environ.get("PLEX_URL", "http://127.0.0.1:32400")).strip()
+    token = (data.get("token") or os.environ.get("PLEX_TOKEN", "")).strip()
+
+    if not destination:
+        return jsonify(error="Dossier de destination requis"), 400
+    if not token:
+        return jsonify(error="PLEX_TOKEN manquant"), 400
+
+    dest_path = Path(destination).expanduser()
+    if not dest_path.exists() or not dest_path.is_dir():
+        return jsonify(error=f"Dossier introuvable: {dest_path}"), 400
+
+    if mode not in {"replace", "merge"}:
+        return jsonify(error="Mode invalide (replace ou merge)"), 400
+
+    plex_db = os.environ.get("PLEX_DB") or _find_plex_db()
+    if not plex_db:
+        return jsonify(error="Base Plex introuvable (configure PLEX_DB ou monte /plex)"), 500
+
+    cmd = [
+        "python3",
+        "playlists/import_itunes_playlists_to_plex.py",
+        "--source-dir", str(dest_path),
+        "--plex-db", str(plex_db),
+        "--plex-url", url,
+        "--plex-token", token,
+        "--apply",
+    ]
+    if mode == "replace":
+        cmd.append("--replace")
+    else:
+        cmd.extend(["--cleanup-plex-similar", "--cleanup-plex-duplicates"])
+
+    run = runner.launch_custom(f"playlist-import-{source}", cmd)
+    return jsonify(
+        ok=True,
+        run_id=run.run_id,
+        source=source,
+        mode=mode,
+        destination=str(dest_path),
+        cmd=cmd,
+    )
+
+
+@app.post("/api/playlists/import/soundiiz")
+def api_pl_import_soundiiz():
+    data = request.get_json(force=True)
+    filename = str(data.get("filename") or "playlist.csv").strip()
+    content = str(data.get("content") or "")
+    source = str(data.get("source") or "soundiiz").strip().lower()
+    mode = str(data.get("mode") or "replace").strip().lower()
+    playlist_name_override = str(data.get("playlist_name") or "").strip()
+    url = (data.get("url") or os.environ.get("PLEX_URL", "http://127.0.0.1:32400")).strip()
+    token = (data.get("token") or os.environ.get("PLEX_TOKEN", "")).strip()
+
+    if not content:
+        return jsonify(error="Fichier vide"), 400
+    if not token:
+        return jsonify(error="PLEX_TOKEN manquant"), 400
+    if mode not in {"replace", "merge"}:
+        return jsonify(error="Mode invalide (replace ou merge)"), 400
+
+    plex_db = _find_plex_db()
+    if not plex_db:
+        return jsonify(error="Base Plex introuvable (monte /plex dans le conteneur)"), 500
+
+    try:
+        parsed_name, tracks = _parse_soundiiz_content(filename, content)
+    except Exception as exc:
+        return jsonify(error=f"Format non lisible: {exc}"), 400
+
+    if not tracks:
+        return jsonify(error="Aucune piste détectée dans le fichier"), 400
+
+    playlist_name = playlist_name_override or parsed_name or "Playlist importée"
+
+    try:
+        matched_ids, unmatched = _lookup_track_ids_in_plex_db(plex_db, tracks)
+        final_ids = list(matched_ids)
+
+        if mode == "merge":
+            existing_key = _plex_find_playlist_rating_key(url, token, playlist_name)
+            if existing_key:
+                existing_ids = _plex_get_playlist_track_ids(url, token, existing_key)
+                seen: set[int] = set()
+                merged: list[int] = []
+                for track_id in existing_ids + matched_ids:
+                    if track_id in seen:
+                        continue
+                    seen.add(track_id)
+                    merged.append(track_id)
+                final_ids = merged
+
+        _plex_create_audio_playlist(url, token, playlist_name, final_ids, replace=(mode in {"replace", "merge"}))
+    except Exception as exc:
+        return jsonify(error=str(exc)), 500
+
+    return jsonify(
+        ok=True,
+        source=source,
+        playlist_name=playlist_name,
+        total_tracks=len(tracks),
+        matched=len(final_ids),
+        unmatched=unmatched,
+        mode=mode,
+        note="Mode merge: fusion avec playlist existante + déduplication des pistes par ratingKey.",
+    )
+
+
+@app.post("/api/playlists/stats")
+def api_pl_stats():
+    _require_pld()
+    data = request.get_json(force=True)
+    raw_root = (data.get("path") or "").strip()
+    if not raw_root:
+        return jsonify(error="Chemin vide. Saisissez le dossier contenant vos playlists."), 400
+    root = Path(raw_root).expanduser()
+    if not root.is_dir():
+        return jsonify(error=f"Dossier introuvable : {root}"), 400
+    files = pld.discover_playlists(root)
+    from collections import Counter
+    by_format, by_enc = Counter(), Counter()
+    total_entries, total_broken, errored = 0, 0, []
+    index = None
+    lib = data.get("library")
+    if lib:
+        index = pld.MusicIndex.build(Path(lib).expanduser())
+    total_matched = 0
+    for f in files:
+        try:
+            pl = pld.parse_playlist(f)
+        except Exception as exc:
+            errored.append({"path": str(f), "error": str(exc)})
+            continue
+        by_format[pl.format] += 1
+        by_enc[pl.encoding] += 1
+        total_entries += pl.track_count
+        for e in pl.entries:
+            p = pld.resolve_entry_path(e.path_or_uri, pl.path)
+            if p and not p.exists():
+                total_broken += 1
+            if index and index.match(e, playlist_path=pl.path):
+                total_matched += 1
+    return jsonify({
+        "playlist_count": len(files),
+        "by_format": by_format.most_common(),
+        "by_encoding": by_enc.most_common(),
+        "total_entries": total_entries,
+        "broken": total_broken,
+        "matched": total_matched if index else None,
+        "match_rate": (100 * total_matched / total_entries) if (index and total_entries) else None,
+        "errored": errored,
+    })
+
+
+@app.post("/api/playlists/diff")
+def api_pl_diff():
+    _require_pld()
+    data = request.get_json(force=True)
+    left_raw = (data.get("left") or "").strip()
+    right_raw = (data.get("right") or "").strip()
+    if not left_raw or not right_raw:
+        return jsonify(error="Renseignez les deux playlists à comparer."), 400
+
+    left_path = Path(left_raw).expanduser()
+    right_path = Path(right_raw).expanduser()
+    if not left_path.is_file():
+        return jsonify(error=f"Playlist A introuvable : {left_path}"), 400
+    if not right_path.is_file():
+        return jsonify(error=f"Playlist B introuvable : {right_path}"), 400
+
+    left_pl = pld.parse_playlist(left_path)
+    right_pl = pld.parse_playlist(right_path)
+
+    left_rows: list[dict[str, str]] = []
+    right_rows: list[dict[str, str]] = []
+    left_set: set[str] = set()
+    right_set: set[str] = set()
+
+    for entry in left_pl.entries:
+        path_key, title_key = _entry_signature(entry, left_pl.path)
+        key = path_key or title_key
+        left_set.add(key)
+        left_rows.append({
+            "key": key,
+            "path": str(entry.path_or_uri or ""),
+            "artist": str(entry.artist or ""),
+            "title": str(entry.title or ""),
+        })
+
+    for entry in right_pl.entries:
+        path_key, title_key = _entry_signature(entry, right_pl.path)
+        key = path_key or title_key
+        right_set.add(key)
+        right_rows.append({
+            "key": key,
+            "path": str(entry.path_or_uri or ""),
+            "artist": str(entry.artist or ""),
+            "title": str(entry.title or ""),
+        })
+
+    added_keys = right_set - left_set
+    removed_keys = left_set - right_set
+
+    added = [row for row in right_rows if row["key"] in added_keys][:300]
+    removed = [row for row in left_rows if row["key"] in removed_keys][:300]
+
+    return jsonify({
+        "left_name": left_pl.name,
+        "right_name": right_pl.name,
+        "left_count": left_pl.track_count,
+        "right_count": right_pl.track_count,
+        "same": len(left_set & right_set),
+        "added": added,
+        "removed": removed,
+        "added_count": len(added_keys),
+        "removed_count": len(removed_keys),
+        "truncated": len(added_keys) > 300 or len(removed_keys) > 300,
+    })
+
+
+@app.post("/api/playlists/dedupe")
+def api_pl_dedupe():
+    _require_pld()
+    data = request.get_json(force=True)
+    raw_path = (data.get("path") or "").strip()
+    if not raw_path:
+        return jsonify(error="Renseignez un fichier playlist."), 400
+
+    path = Path(raw_path).expanduser()
+    if not path.is_file():
+        return jsonify(error=f"Playlist introuvable : {path}"), 400
+
+    playlist = pld.parse_playlist(path)
+    path_groups: dict[str, list[dict[str, str]]] = {}
+    title_groups: dict[str, list[dict[str, str]]] = {}
+
+    for entry in playlist.entries:
+        path_key, title_key = _entry_signature(entry, playlist.path)
+        row = {
+            "path": str(entry.path_or_uri or ""),
+            "artist": str(entry.artist or ""),
+            "title": str(entry.title or ""),
+        }
+        if path_key:
+            path_groups.setdefault(path_key, []).append(row)
+        if title_key:
+            title_groups.setdefault(title_key, []).append(row)
+
+    exact_dupes = [
+        {"key": key, "count": len(rows), "examples": rows[:5]}
+        for key, rows in path_groups.items() if len(rows) > 1
+    ]
+    meta_dupes = [
+        {"key": key, "count": len(rows), "examples": rows[:5]}
+        for key, rows in title_groups.items() if len(rows) > 1
+    ]
+
+    exact_dupes.sort(key=lambda item: item["count"], reverse=True)
+    meta_dupes.sort(key=lambda item: item["count"], reverse=True)
+
+    return jsonify({
+        "name": playlist.name,
+        "track_count": playlist.track_count,
+        "exact_groups": exact_dupes[:150],
+        "meta_groups": meta_dupes[:150],
+        "exact_group_count": len(exact_dupes),
+        "meta_group_count": len(meta_dupes),
+        "truncated": len(exact_dupes) > 150 or len(meta_dupes) > 150,
+    })
+
+
+# -------------------- Logs --------------------
+@app.get("/log/<path:name>")
+def view_log(name: str):
+    log_path = (LOGS_DIR / name).resolve()
+    try:
+        log_path.relative_to(LOGS_DIR.resolve())  # protection traversal
+    except ValueError:
+        abort(403)
+    if not log_path.is_file():
+        abort(404)
+    size = log_path.stat().st_size
+    # Lire les derniers ~128 Ko
+    with log_path.open("rb") as f:
+        if size > 131072:
+            f.seek(-131072, 2)
+            f.readline()  # ignore partial
+        content = f.read().decode("utf-8", errors="replace")
+    return render_template("log_view.html", name=name, content=content, size=size)
+
+
+@app.get("/log/<path:name>/stream")
+def stream_log(name: str):
+    log_path = (LOGS_DIR / name).resolve()
+    try:
+        log_path.relative_to(LOGS_DIR.resolve())
+    except ValueError:
+        abort(403)
+    if not log_path.is_file():
+        abort(404)
+
+    def gen():
+        with log_path.open("r", encoding="utf-8", errors="replace") as f:
+            f.seek(0, 2)
+            idle = 0
+            while idle < 600:  # coupe après 10 min d'inactivité
+                line = f.readline()
+                if not line:
+                    idle += 1
+                    time.sleep(1)
+                    yield ": keepalive\n\n"
+                    continue
+                idle = 0
+                yield f"data: {json.dumps(line.rstrip())}\n\n"
+
+    return Response(stream_with_context(gen()), mimetype="text/event-stream")
+
+
+# -------------------- Santé --------------------
+@app.get("/health")
+def health():
+    return jsonify(ok=True, project_root=str(PROJECT_ROOT),
+                   logs_dir=str(LOGS_DIR), pld=pld is not None)
+
+
+# -------------------- Contrôle Docker --------------------
+def _docker_compose_cmd(action_args: list[str]) -> tuple[list[str], list[str], dict[str, str]]:
+    """Construit la commande docker compose/docker-compose selon ce qui est dispo.
+    Retourne (cmd_v2, cmd_v1, extra_env)."""
+    # Cherche le fichier docker-compose.yml (monté à /app ou parent)
+    compose_file: Optional[str] = None
+    for candidate in (Path("/app"), PROJECT_ROOT, PROJECT_ROOT.parent):
+        cf = candidate / "docker-compose.yml"
+        if cf.exists():
+            compose_file = str(cf)
+            break
+
+    base_env: list[str] = []
+    if compose_file:
+        base_env = ["-f", compose_file]
+
+    # Nom de projet = nom du dossier hôte (déduit du compose file ou env)
+    project_name = os.environ.get("COMPOSE_PROJECT_NAME", "scripts")
+
+    # docker compose (plugin v2)
+    cmd_v2 = ["docker", "compose"] + base_env + action_args
+    # docker-compose (standalone v1)
+    cmd_v1 = ["docker-compose"] + base_env + action_args
+
+    extra_env = {"COMPOSE_PROJECT_NAME": project_name}
+    return cmd_v2, cmd_v1, extra_env
+
+
+def _run_compose(action_args: list[str], timeout: int = 120) -> tuple[bool, subprocess.CompletedProcess[str], str]:
+    """Exécute docker compose avec fallback docker-compose.
+    Retourne (ok, result, cmd_as_string)."""
+    cmd_v2, cmd_v1, extra_env = _docker_compose_cmd(action_args)
+    merged_env = {**os.environ, **extra_env}
+
+    last_result: Optional[subprocess.CompletedProcess[str]] = None
+    last_cmd = ""
+    for cmd in (cmd_v2, cmd_v1):
+        last_cmd = " ".join(cmd)
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=merged_env,
+        )
+        last_result = result
+        # v2 indisponible dans l'image: on bascule sur docker-compose
+        if result.returncode != 0 and cmd is cmd_v2 and (
+            "is not a docker command" in result.stderr
+            or "is not a docker command" in result.stdout
+            or result.returncode == 125
+        ):
+            continue
+        return (result.returncode == 0, result, last_cmd)
+
+    assert last_result is not None
+    return (False, last_result, last_cmd)
+
+
+_DOCKER_ACTION_ARGS: dict[str, list[str]] = {
+    "restart": ["restart", "webui"],
+    "stop":    ["stop",    "webui"],
+    "rebuild": ["up", "-d", "--build", "webui"],
+}
+
+
+def _docker_control_enabled() -> bool:
+    return os.environ.get("WEBUI_ALLOW_DOCKER_CONTROL", "0") == "1"
+
+@app.post("/api/docker/<action>")
+def api_docker_action(action: str):
+    if not _docker_control_enabled():
+        return jsonify(ok=False, error="Contrôle Docker désactivé par sécurité (WEBUI_ALLOW_DOCKER_CONTROL=0)"), 403
+    if action not in _DOCKER_ACTION_ARGS:
+        return jsonify(ok=False, error="Action inconnue"), 400
+
+    # Evite d'interrompre un run actif via restart/rebuild/stop du webui.
+    if action in {"restart", "rebuild", "stop"}:
+        active = runner.running_runs()
+        if active:
+            jobs = [f"{r.job_key} ({r.run_id})" for r in active]
+            return jsonify(
+                ok=False,
+                error="Un ou plusieurs runs sont en cours. Attendez la fin ou arrêtez-les avant cette action.",
+                running=jobs,
+            ), 409
+
+    try:
+        ok, result, cmd = _run_compose(_DOCKER_ACTION_ARGS[action], timeout=120)
+    except FileNotFoundError:
+        return jsonify(ok=False, error="docker / docker-compose introuvable dans le conteneur — vérifiez le montage /var/run/docker.sock"), 503
+    except subprocess.TimeoutExpired:
+        return jsonify(ok=False, error="Timeout (120s)"), 504
+
+    return jsonify(
+        ok=ok,
+        stdout=result.stdout[-2000:],
+        stderr=result.stderr[-500:],
+        returncode=result.returncode,
+        cmd=cmd,
+    )
+
+
+@app.get("/api/docker/services")
+def api_docker_services():
+    """Liste des services docker-compose disponibles pour consultation des logs."""
+    if not _docker_control_enabled():
+        return jsonify(ok=False, error="Contrôle Docker désactivé par sécurité (WEBUI_ALLOW_DOCKER_CONTROL=0)"), 403
+    try:
+        ok, result, cmd = _run_compose(["config", "--services"], timeout=30)
+    except FileNotFoundError:
+        return jsonify(ok=False, error="docker / docker-compose introuvable"), 503
+    except subprocess.TimeoutExpired:
+        return jsonify(ok=False, error="Timeout (30s)"), 504
+
+    services = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    return jsonify(ok=ok, services=services, cmd=cmd, stderr=result.stderr[-500:])
+
+
+@app.get("/api/docker/logs")
+def api_docker_logs():
+    """Lit les logs docker d'un service (ou tous les services si vide)."""
+    service = (request.args.get("service") or "").strip()
+    tail = int(request.args.get("tail", 300))
+    tail = min(max(tail, 20), 5000)
+
+    args = ["logs", "--no-color", "--tail", str(tail)]
+    if service:
+        args.append(service)
+
+    try:
+        ok, result, cmd = _run_compose(args, timeout=60)
+    except FileNotFoundError:
+        return jsonify(ok=False, error="docker / docker-compose introuvable"), 503
+    except subprocess.TimeoutExpired:
+        return jsonify(ok=False, error="Timeout (60s)"), 504
+
+    return jsonify(
+        ok=ok,
+        cmd=cmd,
+        service=service or "all",
+        tail=tail,
+        output=result.stdout[-200000:],
+        stderr=result.stderr[-2000:],
+        returncode=result.returncode,
+    )
+
+
+@app.post("/api/docker/logs/cleanup")
+def api_logs_cleanup():
+    """Nettoyage des logs applicatifs ou des ressources docker inutilisées."""
+    payload = request.get_json(silent=True) or {}
+    scope = (payload.get("scope") or "app").strip().lower()
+
+    if scope == "app":
+        deleted = []
+        skipped = []
+        with runner._lock:
+            running_logs = {
+                Path(r.log_path)
+                for r in runner.runs.values()
+                if r.log_path and not r.done.is_set()
+            }
+            for p in LOGS_DIR.glob("*.log"):
+                if p in running_logs:
+                    skipped.append(p.name)
+                    continue
+                try:
+                    p.unlink(missing_ok=True)
+                    deleted.append(p.name)
+                except Exception:
+                    skipped.append(p.name)
+
+            try:
+                RUNS_STATE_FILE.unlink(missing_ok=True)
+                deleted.append(RUNS_STATE_FILE.name)
+            except Exception:
+                skipped.append(RUNS_STATE_FILE.name)
+
+            # Conserve seulement les runs en cours (si présents)
+            runner.runs = {
+                r.run_id: r
+                for r in runner.runs.values()
+                if not r.done.is_set()
+            }
+            runner._save_state_locked()
+
+        return jsonify(ok=True, scope="app", deleted=deleted, skipped=skipped)
+
+    if scope == "docker":
+        # Prune uniquement les ressources inutilisées, sans arrêter les services actifs.
+        try:
+            res = subprocess.run(
+                ["docker", "system", "prune", "-f"],
+                capture_output=True,
+                text=True,
+                timeout=90,
+                env=os.environ.copy(),
+            )
+        except FileNotFoundError:
+            return jsonify(ok=False, error="docker introuvable"), 503
+        except subprocess.TimeoutExpired:
+            return jsonify(ok=False, error="Timeout (90s)"), 504
+        return jsonify(
+            ok=res.returncode == 0,
+            scope="docker",
+            stdout=res.stdout[-4000:],
+            stderr=res.stderr[-1000:],
+            returncode=res.returncode,
+            cmd="docker system prune -f",
+        )
+
+    return jsonify(ok=False, error="scope invalide (app|docker)"), 400
+
+
+
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    port = int(os.environ.get("WEBUI_PORT", 8765))
+    host = os.environ.get("WEBUI_HOST", "0.0.0.0")
+    debug = bool(int(os.environ.get("WEBUI_DEBUG", "0")))
+    print(f"🌐 UI sur http://{host}:{port}")
+    print(f"   PROJECT_ROOT={PROJECT_ROOT}")
+    print(f"   LOGS_DIR={LOGS_DIR}")
+    app.run(host=host, port=port, debug=debug, threaded=True)

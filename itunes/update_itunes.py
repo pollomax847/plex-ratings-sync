@@ -2,19 +2,134 @@
 """
 Script automatisé pour mettre à jour la bibliothèque iTunes
 Corrige les chemins Windows vers Linux et autres problèmes courants
+Compatible Docker (chemins auto-détectés via env ITUNES_XML ou montage /itunes)
 """
 
 import os
 import sys
 import subprocess
 from datetime import datetime
+from pathlib import Path
+
+
+def _find_itunes_xml():
+    """Cherche le fichier iTunes XML dans les chemins courants (Docker + hôte)."""
+    candidates = [
+        os.environ.get("ITUNES_XML", ""),
+        "/itunes/iTunes Music Library.xml",
+        "/music/iTunes/iTunes Music Library.xml",
+        "/music/iTunes Music Library.xml",
+        "/data/iTunes Music Library.xml",
+        os.path.join(os.getcwd(), "iTunes Music Library.xml"),
+        os.path.expanduser("~/Music/iTunes/iTunes Music Library.xml"),
+        os.path.expanduser("~/Musiques/iTunes/iTunes Music Library.xml"),
+    ]
+    for path in candidates:
+        if path and os.path.exists(path):
+            return path
+    return None
+
 
 class iTunesUpdater:
-    def __init__(self):
-        self.script_dir = "/home/paulceline/Documents/Projets/Modif xml itunes"
-        self.library_file = "iTunes Music Library.xml"
-        self.editor_script = "itunes_editor.py"
-        self.original_path = "/mnt/MyBook/Musiques/iTunes/iTunes Music Library.xml"
+    def __init__(self, xml_path=None):
+        # Répertoire de ce script (= /app/itunes/ dans Docker)
+        self.script_dir = str(Path(__file__).parent)
+        self.library_file = xml_path or _find_itunes_xml() or "iTunes Music Library.xml"
+        self.editor_script = os.path.join(self.script_dir, "itunes_editor.py")
+        # original_path = même fichier (on modifie en place)
+        self.original_path = self.library_file
+
+    def run_command(self, cmd):
+        """Exécute une commande et retourne le résultat"""
+        try:
+            result = subprocess.run(cmd, shell=True, cwd=self.script_dir,
+                                  capture_output=True, text=True)
+            if result.stdout:
+                print(result.stdout, end="")
+            if result.returncode != 0:
+                print(f"❌ Erreur : {result.stderr}")
+                return False
+            return True
+        except Exception as e:
+            print(f"❌ Erreur d'exécution : {e}")
+            return False
+
+    def update_library_paths(self):
+        """Met à jour tous les chemins de la bibliothèque"""
+        print("🔄 Mise à jour de la bibliothèque iTunes...")
+        print("=" * 50)
+
+        if not os.path.exists(self.library_file):
+            print(f"❌ Fichier non trouvé : {self.library_file}")
+            return False
+
+        # 1. Créer une sauvegarde
+        print("1️⃣ Création d'une sauvegarde...")
+        cmd = f'python3 "{self.editor_script}" "{self.library_file}" --backup'
+        if not self.run_command(cmd):
+            return False
+
+        # 2. Corriger les chemins Windows vers Linux
+        print("\n2️⃣ Correction des chemins de fichiers...")
+        cmd = (f'python3 "{self.editor_script}" "{self.library_file}" '
+               f'--update-paths "file://localhost/E:/Musiques/" "file://localhost/mnt/MyBook/Musiques/"')
+        if not self.run_command(cmd):
+            return False
+
+        # 3. Corriger les problèmes d'encodage
+        print("\n3️⃣ Correction des problèmes d'encodage...")
+        cmd = f'python3 "{self.editor_script}" "{self.library_file}" --fix-encoding'
+        if not self.run_command(cmd):
+            return False
+
+        # 4. Normaliser les artistes
+        print("\n4️⃣ Normalisation des noms d'artistes...")
+        cmd = f'python3 "{self.editor_script}" "{self.library_file}" --normalize-artists'
+        if not self.run_command(cmd):
+            return False
+
+        print("\n✅ Mise à jour terminée!")
+        return True
+
+    def show_stats(self):
+        """Affiche les statistiques de la bibliothèque"""
+        print("\n📊 Statistiques de la bibliothèque mise à jour:")
+        manager = os.path.join(self.script_dir, "itunes_library_manager.py")
+        cmd = f'python3 "{manager}" "{self.library_file}" --stats'
+        self.run_command(cmd)
+
+
+def main():
+    xml_path = None
+    if len(sys.argv) > 1 and sys.argv[1] not in ("--auto", "--help", "-h"):
+        xml_path = sys.argv[1]
+
+    updater = iTunesUpdater(xml_path)
+
+    if not os.path.exists(updater.library_file):
+        print(f"❌ Fichier iTunes XML non trouvé : {updater.library_file}")
+        print("💡 Chemins vérifiés :")
+        print("   • Variable d'env ITUNES_XML")
+        print("   • /itunes/iTunes Music Library.xml  (montage Docker)")
+        print("   • /music/iTunes/iTunes Music Library.xml")
+        print("   Configurez ITUNES_HOST dans .env pour pointer vers votre dossier iTunes.")
+        return 1
+
+    print(f"📍 Fichier iTunes : {updater.library_file}")
+
+    if not os.path.exists(updater.editor_script):
+        print(f"❌ Script d'édition non trouvé : {updater.editor_script}")
+        return 1
+
+    if updater.update_library_paths():
+        updater.show_stats()
+        return 0
+    return 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())
+
     
     def run_command(self, cmd):
         """Exécute une commande et retourne le résultat"""

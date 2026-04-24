@@ -384,80 +384,95 @@ log "   ✅ Traités: $processed"
 log "   ❌ Erreurs: $errors"
 EOF
 
-    chmod +x "$SONGREC_SCRIPT"
-    
-    # Créer la liste des fichiers à traiter
-    jq -r '.[].file_path' "$TEMP_DIR/files_2_star.json" > "$SESSION_QUEUE/files_to_scan.txt"
-    
-    # Créer un rapport détaillé
-    jq '.' "$TEMP_DIR/files_2_star.json" > "$SESSION_QUEUE/files_details.json"
-    
-    log "📝 Fichiers préparés pour songrec-rename:"
-    log "   📁 Queue: $SESSION_QUEUE"
-    log "   📋 Liste: $SESSION_QUEUE/files_to_scan.txt"
-    log "   🔧 Script: $SESSION_QUEUE/process_2_stars.sh"
-    
-    # VÉRIFICATION D'ENCODAGE AVANT SONGREC
-    log ""
-    log "${BLUE}🔍 ÉTAPE 3.1: Vérification des problèmes d'encodage${NC}"
-    log "================================================"
-    
-    # Détecter les problèmes d'encodage dans la bibliothèque
-    ENCODING_REPORT="$SESSION_QUEUE/encoding_issues.txt"
-    if "$BASE_DIR/audio/detect_encoding_problems.sh" "$AUDIO_LIBRARY" detect "$ENCODING_REPORT" >> "$LOG_FILE" 2>&1; then
-        log "${GREEN}✅ Aucun problème d'encodage détecté${NC}"
-    else
-        log "${YELLOW}⚠️ Problèmes d'encodage détectés${NC}"
-        log "   📋 Rapport: $ENCODING_REPORT"
-        
-        # Proposer la correction automatique
-        log "${BLUE}🔧 Correction automatique des problèmes d'encodage...${NC}"
-        if "$BASE_DIR/audio/fix_encoding_issues.sh" "$AUDIO_LIBRARY" fix >> "$LOG_FILE" 2>&1; then
-            log "${GREEN}✅ Correction d'encodage réussie${NC}"
+    cat > "$SONGREC_SCRIPT" << 'EOF'
+#!/bin/bash
+# Pipeline 2★ : songrec-rename -i → beet import → clear rating
+# Généré automatiquement
+
+QUEUE_DIR="$(dirname "$0")"
+LOG_FILE="$QUEUE_DIR/songrec_processing.log"
+
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
+}
+
+log "🎵 Pipeline 2★ : songrec-rename -i → beet import"
+log "================================================"
+
+# Vérifier que songrec-rename est installé
+if ! command -v songrec-rename &> /dev/null; then
+    log "❌ ERREUR: songrec-rename non trouvé"
+    log "   Installation : cargo install songrec"
+    exit 1
+fi
+
+# Vérifier que beet est installé
+if ! command -v beet &> /dev/null; then
+    log "❌ ERREUR: beet non trouvé"
+    log "   Installation : pip install beets"
+    exit 1
+fi
+
+# Traiter chaque fichier dans la liste
+processed=0
+errors=0
+
+while IFS= read -r file_path; do
+    if [ -f "$file_path" ]; then
+        log "🔍 $(basename "$file_path")"
+
+        # Étape 1 : songrec-rename -i (identification Shazam + tags ID3)
+        if songrec-rename -i "$file_path" >> "$LOG_FILE" 2>&1; then
+            log "   ✅ songrec-rename -i OK"
         else
-            log "${RED}❌ Échec de la correction d'encodage${NC}"
-            log "   ⚠️ Le traitement songrec risque d'échouer"
+            log "   ❌ songrec-rename -i échoué — fichier ignoré"
+            ((errors++))
+            continue
         fi
+
+        # Étape 2 : beet import -q (classement dans la bibliothèque Music)
+        if beet import -q "$file_path" >> "$LOG_FILE" 2>&1; then
+            log "   ✅ beet import OK"
+            ((processed++))
+        else
+            log "   ❌ beet import échoué — rating NON effacé"
+            ((errors++))
+        fi
+    else
+        log "⚠️ Fichier introuvable: $file_path"
+        ((errors++))
     fi
-    
-    # TRAITEMENT AUTOMATIQUE des fichiers 2 étoiles
-    log ""
-    log "${BLUE}🚀 Lancement automatique du scan songrec-rename...${NC}"
-    
-    # Vérifier que songrec-rename est disponible
-    if command -v songrec-rename &> /dev/null; then
-        log "✅ songrec-rename trouvé, traitement automatique en cours..."
-        
-        # Lancer le script de traitement automatiquement
-        cd "$SESSION_QUEUE"
-        if ./process_2_stars.sh >> "$LOG_FILE" 2>&1; then
+done < "$QUEUE_DIR/files_to_scan.txt"
+
+log "📊 Traitement terminé:"
+log "   ✅ Traités (songrec + beet): $processed"
+log "   ❌ Erreurs: $errors"
             log "${GREEN}✅ Traitement songrec-rename terminé avec succès${NC}"
             
             # Compter les fichiers traités
-            processed_count=$(grep -c "✅ Succès:" "$SESSION_QUEUE/songrec_processing.log" 2>/dev/null || echo "0")
-            error_count=$(grep -c "❌ Échec:" "$SESSION_QUEUE/songrec_processing.log" 2>/dev/null || echo "0")
+            # Compter les fichiers traités (beet import OK = pipeline complet réussi)
+            processed_count=$(grep -c "✅ beet import OK" "$SESSION_QUEUE/songrec_processing.log" 2>/dev/null || echo "0")
+            error_count=$(grep -c "❌" "$SESSION_QUEUE/songrec_processing.log" 2>/dev/null || echo "0")
             
             TOTAL_SONGREC_PROCESSED=$processed_count
             TOTAL_SONGREC_ERRORS=$error_count
             
-            log "📊 Résultats songrec-rename:"
+            log "📊 Résultats pipeline 2★ (songrec-rename -i + beet):"
             log "   ✅ Fichiers traités: $processed_count"
             log "   ❌ Erreurs: $error_count"
             
-            # NOUVEAU : Supprimer automatiquement les ratings 2 étoiles après songrec réussi
+            # Effacer les ratings 2★ via API Plex pour les fichiers traités avec succès
             if [ "$processed_count" -gt 0 ]; then
                 log ""
-                log "${BLUE}🧹 ÉTAPE 3.2: Suppression automatique des ratings 2 étoiles${NC}"
+                log "${BLUE}🧹 ÉTAPE 3.2: Effacement des ratings 2★ via API Plex${NC}"
                 log "====================================================="
-                log "Les fichiers ont été traités avec songrec-rename, suppression des ratings 2⭐..."
-                
-                # Appeler le script de nettoyage des ratings 2 étoiles (avec réorganisation pour Lidarr)
-                if "$BASE_DIR/ratings/clear_ratings_from_files.sh" 2 "$AUDIO_LIBRARY" >> "$LOG_FILE" 2>&1; then
-                    log "${GREEN}✅ Ratings 2 étoiles supprimés et fichiers réorganisés pour Lidarr${NC}"
-                    log "   Les fichiers traités n'ont plus de ratings 2⭐ dans Plex"
-                    log "   Structure: Artist/Album/01 - Title.mp3"
+                log "$processed_count fichier(s) traités avec succès → effacement des ratings 2★..."
+
+                # Utiliser le script API Plex (fonctionne même avec /plex en :ro)
+                if python3 "$BASE_DIR/ratings/clear_2star_ratings_api.py" >> "$LOG_FILE" 2>&1; then
+                    log "${GREEN}✅ Ratings 2★ effacés dans Plex via API${NC}"
                 else
-                    log "${RED}❌ Erreur lors de la suppression des ratings 2 étoiles${NC}"
+                    log "${RED}❌ Erreur lors de l'effacement des ratings 2★ via API${NC}"
                     TOTAL_SONGREC_ERRORS=$((TOTAL_SONGREC_ERRORS + 1))
                 fi
             fi

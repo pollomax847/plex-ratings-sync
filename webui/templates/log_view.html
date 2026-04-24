@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}{{ name }}{% endblock %}
+{% block content %}
+<h1>📄 {{ name }}</h1>
+<p class="muted">{{ (size / 1024) | round(1) }} Ko — <a href="{{ url_for('logs_page') }}">← retour</a>
+— <label><input type="checkbox" id="follow" checked> Suivre</label></p>
+<pre id="log-content">{{ content }}</pre>
+<script>
+const es = new EventSource({{ url_for('stream_log', name=name) | tojson }});
+const pre = document.getElementById('log-content');
+const follow = document.getElementById('follow');
+es.onmessage = (e) => {
+  pre.textContent += JSON.parse(e.data) + '\n';
+  if (follow.checked) pre.scrollTop = pre.scrollHeight;
+};
+</script>
+{% endblock %}

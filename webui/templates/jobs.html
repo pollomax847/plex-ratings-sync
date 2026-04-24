@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Jobs{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <p class="eyebrow">Observabilité</p>
+    <h1>Historique des runs</h1>
+    <p class="muted">Suivi en direct des exécutions lancées depuis le tableau de bord.</p>
+  </div>
+</section>
+{% if request.args.get('missing_run') %}
+<div class="notice notice-info compact-notice">
+  Le run {{ request.args.get('missing_run') }} n'est plus disponible (redémarrage ou ancienne exécution).
+</div>
+{% endif %}
+<div hx-get="{{ url_for('htmx_runs') }}" hx-trigger="load, every 3s">
+  {% include "_runs_table.html" %}
+</div>
+{% endblock %}

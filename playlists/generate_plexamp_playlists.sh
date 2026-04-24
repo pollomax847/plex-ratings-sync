@@ -11,7 +11,22 @@ NC='\033[0m' # No Color
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG_DIR="$HOME/logs/plexamp_playlists"
-PLEX_DB="/var/snap/plexmediaserver/common/Library/Application Support/Plex Media Server/Plug-in Support/Databases/com.plexapp.plugins.library.db"
+
+# Recherche automatique de la base Plex (Docker-aware)
+find_plex_db() {
+    local candidates=(
+        "/plex/Plug-in Support/Databases/com.plexapp.plugins.library.db"
+        "/var/snap/plexmediaserver/common/Library/Application Support/Plex Media Server/Plug-in Support/Databases/com.plexapp.plugins.library.db"
+        "/var/lib/plexmediaserver/Library/Application Support/Plex Media Server/Plug-in Support/Databases/com.plexapp.plugins.library.db"
+        "$HOME/.config/Plex Media Server/Plug-in Support/Databases/com.plexapp.plugins.library.db"
+    )
+    for p in "${candidates[@]}"; do
+        [ -f "$p" ] && echo "$p" && return 0
+    done
+    return 1
+}
+
+PLEX_DB="$(find_plex_db)"
 
 # Créer les répertoires nécessaires
 mkdir -p "$LOG_DIR"
@@ -51,13 +66,21 @@ check_requirements() {
 # Créer les playlists automatiques
 create_playlists() {
     local mode="$1"  # "create" ou "dry-run"
+    local extra_args=()
+
+    if [ "${PLEX_APPEND_EXISTING:-0}" = "1" ]; then
+        extra_args+=("--append-existing")
+    fi
+    if [ -n "${PLEX_CUSTOM_PLAYLISTS_CONFIG:-}" ]; then
+        extra_args+=("--custom-config" "$PLEX_CUSTOM_PLAYLISTS_CONFIG")
+    fi
     
     if [ "$mode" = "dry-run" ]; then
         log "${YELLOW}📋 Mode simulation - aperçu des playlists${NC}"
-        python3 "$SCRIPT_DIR/auto_playlists_plexamp.py" --plex-db "$PLEX_DB" --dry-run --verbose
+        python3 "$SCRIPT_DIR/auto_playlists_plexamp.py" --plex-db "$PLEX_DB" --dry-run --verbose "${extra_args[@]}"
     else
         log "${GREEN}🎵 Génération des playlists PlexAmp${NC}"
-        python3 "$SCRIPT_DIR/auto_playlists_plexamp.py" --plex-db "$PLEX_DB" --verbose
+        python3 "$SCRIPT_DIR/auto_playlists_plexamp.py" --plex-db "$PLEX_DB" --verbose "${extra_args[@]}"
     fi
 }
 
@@ -66,11 +89,12 @@ cleanup_old_playlists() {
     log "${BLUE}🧹 Nettoyage des anciennes playlists automatiques${NC}"
     
     # Script Python pour supprimer les playlists automatiques existantes
-    python3 << 'EOF'
+    PLEX_DB="$PLEX_DB" python3 << 'EOF'
 import sqlite3
 import sys
+import os
 
-PLEX_DB = "/var/snap/plexmediaserver/common/Library/Application Support/Plex Media Server/Plug-in Support/Databases/com.plexapp.plugins.library.db"
+PLEX_DB = os.environ["PLEX_DB"]
 
 try:
     with sqlite3.connect(PLEX_DB) as conn:
@@ -169,14 +193,21 @@ case "${1:-}" in
         echo "Sans option: mode interactif"
         ;;
     "")
-        # Mode interactif
         check_requirements
-        if [ $? -eq 0 ]; then
-            main_menu
-        else
+        if [ $? -ne 0 ]; then
             log "${RED}❌ Prérequis non satisfaits${NC}"
             exit 1
         fi
+
+        # Les jobs Docker/cron/web n'ont pas d'entrée interactive: lancer directement la génération.
+        if [ ! -t 0 ]; then
+            log "${BLUE}🤖 Mode non interactif détecté: génération automatique${NC}"
+            create_playlists "create"
+            exit $?
+        fi
+
+        # Mode interactif
+        main_menu
         ;;
     *)
         echo -e "${RED}❌ Option inconnue: $1${NC}"

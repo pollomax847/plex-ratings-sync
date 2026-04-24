@@ -534,4 +534,7 @@ EOF
     esac
 }
 
-main "$@"
+# N'exécute main que si le script est lancé directement (pas sourcé)
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi

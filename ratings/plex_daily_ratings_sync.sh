@@ -106,10 +106,19 @@ log_success "Script de synchronisation trouvé"
 
 # Trouver la base de données Plex
 log_action "Recherche de la base de données Plex..."
-PLEX_DB="/var/snap/plexmediaserver/common/Library/Application Support/Plex Media Server/Plug-in Support/Databases/com.plexapp.plugins.library.db"
+_plex_db_candidates=(
+    "/plex/Plug-in Support/Databases/com.plexapp.plugins.library.db"
+    "/var/snap/plexmediaserver/common/Library/Application Support/Plex Media Server/Plug-in Support/Databases/com.plexapp.plugins.library.db"
+    "/var/lib/plexmediaserver/Library/Application Support/Plex Media Server/Plug-in Support/Databases/com.plexapp.plugins.library.db"
+    "$HOME/.config/Plex Media Server/Plug-in Support/Databases/com.plexapp.plugins.library.db"
+)
+PLEX_DB=""
+for _c in "${_plex_db_candidates[@]}"; do
+    if [ -f "$_c" ]; then PLEX_DB="$_c"; break; fi
+done
 
-if [ ! -f "$PLEX_DB" ]; then
-    log_error "Base de données Plex non trouvée: $PLEX_DB"
+if [ -z "$PLEX_DB" ]; then
+    log_error "Base de données Plex non trouvée dans les chemins connus"
     exit 1
 fi
 log_success "Base de données Plex trouvée: $PLEX_DB"

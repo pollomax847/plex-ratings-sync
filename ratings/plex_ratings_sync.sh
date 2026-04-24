@@ -44,10 +44,20 @@ log ""
 
 # Trouver la base de données Plex
 log "${CYAN}🔍 Recherche de la base de données Plex...${NC}"
-PLEX_DB=$(find /var/snap/plexmediaserver -name "com.plexapp.plugins.library.db" 2>/dev/null | head -1)
 
+# Cherche dans l'ordre : variable d'env PLEX_DB → montage Docker → snap → lib → ~/.config
 if [ -z "$PLEX_DB" ]; then
-    PLEX_DB=$(find ~/.config/Plex\ Media\ Server -name "com.plexapp.plugins.library.db" 2>/dev/null | head -1)
+    for _candidate in \
+        "/plex/Plug-in Support/Databases/com.plexapp.plugins.library.db" \
+        "/var/snap/plexmediaserver/common/Library/Application Support/Plex Media Server/Plug-in Support/Databases/com.plexapp.plugins.library.db" \
+        "/var/lib/plexmediaserver/Library/Application Support/Plex Media Server/Plug-in Support/Databases/com.plexapp.plugins.library.db" \
+        "$HOME/.config/Plex Media Server/Plug-in Support/Databases/com.plexapp.plugins.library.db"
+    do
+        if [ -f "$_candidate" ]; then
+            PLEX_DB="$_candidate"
+            break
+        fi
+    done
 fi
 
 if [ -z "$PLEX_DB" ] || [ ! -f "$PLEX_DB" ]; then

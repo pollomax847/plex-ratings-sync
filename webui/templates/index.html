@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}Accueil{% endblock %}
+{% block content %}
+<section class="hero">
+  <div>
+    <p class="eyebrow">Orchestration media</p>
+    <h1>Pilote tes automatisations Plex en temps reel</h1>
+    <p class="hero-copy">Declenche les workflows, surveille les runs et diagnostique l'etat Docker depuis une console unique, claire et orientee action.</p>
+  </div>
+  <div class="hero-actions">
+    <a class="btn" href="{{ url_for('jobs_page') }}">Voir les runs</a>
+    <a class="btn secondary" href="{{ url_for('playlists_page') }}">Outils playlists</a>
+    <a class="btn ghost" href="{{ url_for('config_page') }}">Controle Docker</a>
+  </div>
+</section>
+
+<section class="stats">
+  <div class="card"><h3>{{ stats.running }}</h3><p>En cours</p></div>
+  <div class="card ok"><h3>{{ stats.success }}</h3><p>Succès</p></div>
+  <div class="card err"><h3>{{ stats.failed }}</h3><p>Échecs</p></div>
+  <div class="card"><h3>{{ stats.total_jobs }}</h3><p>Jobs dispo</p></div>
+</section>
+
+{% if docker_mode %}
+<section class="notice notice-warn">
+  <strong>Mode Docker</strong>
+  <span>Les jobs qui modifient directement la base Plex doivent rester en simulation dans l'UI. Les actions réelles doivent être lancées sur l'hôte.</span>
+</section>
+{% endif %}
+
+<section class="quick-links stack-lg">
+  <a class="quick-link-card" href="{{ url_for('config_page') }}">
+    <span class="quick-kicker">Docker</span>
+    <strong>Etat runtime et actions conteneur</strong>
+    <span>Verification des montages, permissions et commandes restart/rebuild.</span>
+  </a>
+  <a class="quick-link-card" href="{{ url_for('logs_page') }}">
+    <span class="quick-kicker">Diagnostics</span>
+    <strong>Flux de logs centralise</strong>
+    <span>Filtre les logs scripts et collecte rapidement les erreurs critiques.</span>
+  </a>
+  <a class="quick-link-card" href="{{ url_for('jobs_page') }}">
+    <span class="quick-kicker">Execution</span>
+    <strong>Historique des jobs</strong>
+    <span>Observe les etats running/success/failed avec rafraichissement live.</span>
+  </a>
+</section>
+
+{% for cat in categories %}
+<section class="stack-lg">
+  <div class="section-head">
+    <h2>{{ cat|capitalize }}</h2>
+    <span class="section-meta">{{ jobs_by_cat[cat]|length }} job{% if jobs_by_cat[cat]|length > 1 %}s{% endif %}</span>
+  </div>
+  <div class="grid">
+    {% for j in jobs_by_cat[cat] %}
+    <div class="job-card">
+      <div class="icon">{{ j.icon }}</div>
+      <div class="body">
+        <strong>{{ j.title }}</strong>
+        <p>{{ j.desc }}</p>
+        <code>{{ j.cmd|join(' ') }}</code>
+      </div>
+      <button class="btn"
+              hx-post="{{ url_for('api_run', job_key=j.key) }}"
+              hx-swap="none"
+              hx-on::after-request="if(event.detail.successful){const r=JSON.parse(event.detail.xhr.response);window.location='/job/'+r.run_id}">
+        ▶ Lancer
+      </button>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% endfor %}
+
+<section class="stack-lg">
+  <div class="section-head">
+    <h2>Derniers runs</h2>
+    <a class="text-link" href="{{ url_for('jobs_page') }}">Tout voir</a>
+  </div>
+  <div hx-get="{{ url_for('htmx_runs') }}" hx-trigger="load, every 3s">
+    {% include "_runs_table.html" %}
+  </div>
+</section>
+{% endblock %}

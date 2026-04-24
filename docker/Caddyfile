@@ -1,0 +1,16 @@
+# Proxy TLS local vers le webui Flask.
+# Certificat signé par la CA interne Caddy (tls internal).
+# URL: https://localhost:9443 (ou WEBUI_TLS_PORT)
+
+https://localhost:8443, https://127.0.0.1:8443 {
+    tls internal
+    encode gzip zstd
+
+    reverse_proxy webui:8765 {
+        header_up X-Forwarded-Proto https
+    }
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    }
+}

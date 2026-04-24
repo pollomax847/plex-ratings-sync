@@ -79,7 +79,7 @@ if ! command -v sudo &>/dev/null; then
 fi
 
 # --------------------------- 1. System packages ------------------------------
-APT_PACKAGES=(python3 python3-venv python3-pip sqlite3 ffmpeg libnotify-bin jq curl rsync git)
+APT_PACKAGES=(python3 python3-venv python3-pip sqlite3 ffmpeg id3v2 libnotify-bin jq curl rsync git)
 
 if [[ $SKIP_APT -eq 0 ]]; then
     section "System packages (apt)"
@@ -101,8 +101,15 @@ if [[ $SKIP_APT -eq 0 ]]; then
     fi
     if command -v songrec &>/dev/null; then
         ok "songrec found: $(command -v songrec)"
+    elif apt-cache show songrec &>/dev/null; then
+        if ask "Install songrec (required for the 2★ workflow)?" "y"; then
+            sudo apt install -y songrec
+            ok "songrec installed."
+        else
+            warn "songrec not installed: the 2★ workflow will stay incomplete."
+        fi
     else
-        warn "songrec not found (optional, needed for 2★ workflow). Install: sudo apt install songrec OR flatpak install flathub io.github.marinm.songrec"
+        warn "songrec not available via apt on this distribution. Install it manually."
     fi
 else
     info "apt step skipped (--no-apt)."
@@ -139,6 +146,32 @@ section "Script permissions"
 find "$SCRIPT_DIR" -type f \( -name "*.sh" -o -name "*.py" \) \
     -not -path "*/.venv/*" -not -path "*/.git/*" -exec chmod +x {} +
 ok "All .sh and .py files are executable."
+
+section "Install songrec-rename"
+SONGREC_RENAME_TARGET="/usr/local/bin/songrec-rename"
+if command -v sudo &>/dev/null && ask "Install songrec-rename into /usr/local/bin?" "y"; then
+    cat > /tmp/songrec-rename <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+exec python3 "$SCRIPT_DIR/utils/songrec_rename_cli.py" "\$@"
+EOF
+    sudo install -m 755 /tmp/songrec-rename "$SONGREC_RENAME_TARGET"
+    rm -f /tmp/songrec-rename
+    ok "songrec-rename installed: $SONGREC_RENAME_TARGET"
+else
+    mkdir -p "$HOME/.local/bin"
+    cat > "$HOME/.local/bin/songrec-rename" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+exec python3 "$SCRIPT_DIR/utils/songrec_rename_cli.py" "\$@"
+EOF
+    chmod +x "$HOME/.local/bin/songrec-rename"
+    ok "songrec-rename installed: $HOME/.local/bin/songrec-rename"
+    case ":$PATH:" in
+        *":$HOME/.local/bin:"*) ;;
+        *) warn "Add $HOME/.local/bin to your PATH to use songrec-rename everywhere." ;;
+    esac
+fi
 
 # --------------------------- 5. Directories ----------------------------------
 section "Working directories"

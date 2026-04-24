@@ -161,6 +161,57 @@ export AUDIO_LIBRARY="$HOME/Musiques"
 
 Voir [TUTO.md](TUTO.md#3-configuration) pour tous les chemins possibles.
 
+### 🎨 Personnaliser le style des posters (Docker)
+
+Le générateur de playlists peut maintenant lire un style de posters depuis un
+fichier JSON via la variable `PLEX_POSTER_STYLE_CONFIG`.
+
+Par défaut (docker-compose), il utilise :
+
+- `playlists/poster_style.default.json`
+
+Champs principaux du JSON :
+
+- `default_colors` : gradient fallback `[ [r,g,b], [r,g,b] ]`
+- `title_color`, `subtitle_color`, `line_color`, `title_shadow_color`
+- `title_size`, `subtitle_size`, `emoji_size`, `title_start_y`
+- `font_path`, `emoji_font_path`
+- `themes` : règles par mots-clés pour surcharger couleur/emoji
+
+Exemple de surcharge dans `.env` :
+
+```bash
+PLEX_POSTER_STYLE_CONFIG=/app/playlists/poster_style.default.json
+```
+
+Puis reconstruire/redémarrer :
+
+```bash
+docker compose up -d --build webui cron
+```
+
+Presets fournis dans `playlists/` :
+
+- `poster_style.default.json`
+- `poster_style.neon_retro.json`
+- `poster_style.minimal_bw.json`
+- `poster_style.sunset_orange_blue.json`
+
+Exemple pour basculer en preset Minimal :
+
+```bash
+# .env
+PLEX_POSTER_STYLE_CONFIG=/app/playlists/poster_style.minimal_bw.json
+
+docker compose up -d --build webui cron
+```
+
+Régénérer uniquement les posters (sans recréer les playlists) :
+
+```bash
+docker compose run --rm scripts run python3 playlists/auto_playlists_plexamp.py --posters-only
+```
+
 ---
 
 ## 🛟 Sécurité & bonnes pratiques

@@ -1,0 +1,21 @@
+# Crontab embarquée pour le mode `docker run plex-scripts cron`
+# Remplace les timers systemd. Les logs sont envoyés sur stdout (→ docker logs).
+#
+# Format : m h dom mon dow  commande
+# TZ est fixé par la variable d'env du conteneur (défaut Europe/Paris).
+
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+PYTHONUNBUFFERED=1
+
+# 22h00 — Sync ratings Plex → ID3
+0 22 * * *  cd /app && python3 ratings/plex_rating_sync_complete.py >> /data/logs/ratings.log 2>&1
+
+# 02h00 — Workflow quotidien 1★/2★
+0  2 * * *  cd /app && ./workflows/plex_daily_workflow.sh >> /data/logs/daily.log 2>&1
+
+# 03h00 dimanche — Génération playlists Plexamp
+0  3 * * 0  cd /app && ./playlists/generate_plexamp_playlists.sh >> /data/logs/playlists.log 2>&1
+
+# 04h00 — Export des playlists en M3U
+0  4 * * *  cd /app && python3 playlists/export_plex_playlist.py --all --dest /playlists >> /data/logs/export.log 2>&1
