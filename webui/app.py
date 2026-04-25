@@ -34,6 +34,7 @@ import json
 import os
 import re
 import secrets
+import shlex
 import sqlite3
 import subprocess
 import sys
@@ -69,6 +70,7 @@ LOGS_DIR = Path(os.environ.get(
 ))
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 RUNS_STATE_FILE = LOGS_DIR / "runs_state.json"
+POSTER_STYLE_GLOB = "poster_style*.json"
 
 PLEX_DB_CANDIDATES = [
     "/plex/Plug-in Support/Databases/com.plexapp.plugins.library.db",
@@ -85,6 +87,21 @@ except Exception as exc:  # pragma: no cover
     _pld_err = repr(exc)
 else:
     _pld_err = None
+
+try:
+    from auto_playlists_plexamp import PlexAmpAutoPlaylist  # type: ignore[import-not-found]
+except Exception as exc:  # pragma: no cover
+    PlexAmpAutoPlaylist = None  # type: ignore[assignment]
+    _auto_pl_err = repr(exc)
+else:
+    _auto_pl_err = None
+
+
+def _default_plex_url() -> str:
+    """Retourne l'URL Plex par défaut selon le contexte (Docker vs host)."""
+    if Path("/.dockerenv").is_file():
+        return "http://host.docker.internal:32400"
+    return "http://localhost:32400"
 
 
 def _new_log_buffer() -> deque[str]:
@@ -465,7 +482,7 @@ def _scan_plex_preferences() -> dict[str, Any]:
         return {
             "found": True,
             "token": env_token,
-            "url": os.environ.get("PLEX_URL", "http://host.docker.internal:32400"),
+            "url": os.environ.get("PLEX_URL", _default_plex_url()),
             "source": "variable d'environnement PLEX_TOKEN",
             "tried": [],
         }
@@ -491,7 +508,7 @@ def _scan_plex_preferences() -> dict[str, Any]:
                 if m:
                     mu = url_re.search(txt)
                     url = (mu.group(1).split(",")[0] if mu else
-                           os.environ.get("PLEX_URL", "http://host.docker.internal:32400"))
+                           os.environ.get("PLEX_URL", _default_plex_url()))
                     return {
                         "found": True,
                         "token": m.group(1),
@@ -505,9 +522,20 @@ def _scan_plex_preferences() -> dict[str, Any]:
         except Exception as exc:
             info["note"] = f"erreur: {exc}"
         tried.append(info)
+    compose_refresh_cmd = (
+        "cd "
+        + shlex.quote(str(PROJECT_ROOT))
+        + " && sudo python3 utils/detect_plex_token.py --write-env .env"
+        + " && docker compose up -d plex-scripts-webui"
+    )
     return {
         "found": False,
         "tried": tried,
+        "fix_steps": [
+            "Si Plex est sur l'hôte: exécute la détection avec sudo puis recharge le service webui.",
+            compose_refresh_cmd,
+            "Alternative: monte le dossier 'Plex Media Server' en /plex:ro (ou ajuste PLEX_CONFIG_HOST).",
+        ],
         "hint": "Monte Preferences.xml dans le conteneur, ex: "
                 "-v '/var/snap/plexmediaserver/common/.../Plex Media Server':/plex:ro "
                 "(ou utilise sudo utils/detect_plex_token.py --write-env .env sur l'hôte)",
@@ -661,19 +689,36 @@ def playlists_page():
         "/playlists",
     ]
     _pl_default = next((p for p in _pl_candidates if _has_playlists(p)), "/playlists")
+
+    poster_style_files = sorted((PROJECT_ROOT / "playlists").glob(POSTER_STYLE_GLOB))
+    current_poster_style = os.environ.get("PLEX_POSTER_STYLE_CONFIG", "").strip()
     defaults = {
         "music": os.environ.get("AUDIO_LIBRARY", "/music"),
         "playlists": _pl_default,
-        "plex_url": os.environ.get("PLEX_URL", "http://host.docker.internal:32400"),
+        "plex_url": os.environ.get("PLEX_URL", _default_plex_url()),
         "plex_token": "",
+        "poster_style": current_poster_style,
+        "poster_styles": [
+            {"name": p.name.replace("poster_style.", "").replace(".json", ""), "path": str(p)}
+            for p in poster_style_files
+        ],
     }
-    return render_template("playlists.html", defaults=defaults)
+    status = {
+        "deleted": str(request.args.get("deleted") or "").strip(),
+        "error": str(request.args.get("delete_error") or "").strip(),
+    }
+    return render_template("playlists.html", defaults=defaults, delete_status=status)
 
 
 @app.route("/logs")
 def logs_page():
     log_files = sorted(LOGS_DIR.glob("*.log"), key=lambda p: p.stat().st_mtime, reverse=True)
-    return render_template("logs.html", logs=log_files[:200], logs_dir=LOGS_DIR)
+    return render_template(
+        "logs.html",
+        logs=log_files[:200],
+        logs_dir=LOGS_DIR,
+        docker_control_enabled=_docker_control_enabled(),
+    )
 
 
 # -------------------- API : détection automatique du token Plex --------------
@@ -881,7 +926,7 @@ def api_pl_match():
 def api_pl_plex():
     _require_pld()
     data = request.get_json(force=True)
-    url = data.get("url") or os.environ.get("PLEX_URL", "http://127.0.0.1:32400")
+    url = data.get("url") or os.environ.get("PLEX_URL", _default_plex_url())
     token = data.get("token") or os.environ.get("PLEX_TOKEN", "")
     if not token:
         return jsonify(error="PLEX_TOKEN manquant"), 400
@@ -905,7 +950,7 @@ def api_pl_plex_tracks():
     if not rating_key:
         return jsonify(error="rating_key manquant"), 400
 
-    url = data.get("url") or os.environ.get("PLEX_URL", "http://127.0.0.1:32400")
+    url = data.get("url") or os.environ.get("PLEX_URL", _default_plex_url())
     token = data.get("token") or os.environ.get("PLEX_TOKEN", "")
     if not token:
         return jsonify(error="PLEX_TOKEN manquant"), 400
@@ -958,6 +1003,82 @@ def _plex_find_playlist_rating_key(url: str, token: str, title: str) -> str | No
         if item.attrib.get("title", "").strip().casefold() == title.strip().casefold():
             return item.attrib.get("ratingKey")
     return None
+
+
+def _plex_list_audio_playlists(url: str, token: str) -> list[dict[str, str]]:
+    root = ET.fromstring(_plex_request("GET", f"{url.rstrip('/')}/playlists", token))
+    out: list[dict[str, str]] = []
+    for item in root.findall("Playlist") + root.findall("Directory"):
+        if item.attrib.get("playlistType") != "audio":
+            continue
+        title = str(item.attrib.get("title") or "").strip()
+        rating_key = str(item.attrib.get("ratingKey") or "").strip()
+        if not title or not rating_key:
+            continue
+        out.append({"title": title, "rating_key": rating_key})
+    return out
+
+
+def _playlist_name_aliases(name: str) -> set[str]:
+    """Construit des alias de comparaison pour matcher un nom saisi par l'utilisateur.
+
+    Exemple pris en charge:
+    - "Auto_Holiday_209_titres"
+    - "[Auto] 🎵 Holiday (209 titres)"
+    """
+    raw = (name or "").strip()
+    if not raw:
+        return set()
+
+    variants = {
+        raw,
+        Path(raw).stem,
+        raw.replace("_", " "),
+        Path(raw).stem.replace("_", " "),
+    }
+
+    aliases: set[str] = set()
+    for v in variants:
+        s = " ".join(v.split())
+        if not s:
+            continue
+        aliases.add(s.casefold())
+
+        no_auto = re.sub(r"^\[?auto\]?\s*", "", s, flags=re.IGNORECASE)
+        no_count = re.sub(r"\(\s*\d+\s*titres?\s*\)\s*$", "", no_auto, flags=re.IGNORECASE)
+        simplified = re.sub(r"[^\w\s]", " ", no_count, flags=re.UNICODE)
+        simplified = " ".join(simplified.split())
+        if simplified:
+            aliases.add(simplified.casefold())
+
+    return aliases
+
+
+def _plex_delete_matching_audio_playlists(url: str, token: str, candidate_names: list[str]) -> list[str]:
+    """Supprime les playlists audio Plex dont le titre match un nom candidat (tolérant aux variantes)."""
+    candidates = [str(x or "").strip() for x in candidate_names if str(x or "").strip()]
+    if not candidates:
+        return []
+
+    candidate_aliases = [_playlist_name_aliases(name) for name in candidates]
+    existing = _plex_list_audio_playlists(url, token)
+    deleted_titles: list[str] = []
+
+    for row in existing:
+        title = row.get("title", "")
+        rating_key = row.get("rating_key", "")
+        if not title or not rating_key:
+            continue
+
+        title_aliases = _playlist_name_aliases(title)
+        if not title_aliases:
+            continue
+
+        if any(title_aliases.intersection(c_aliases) for c_aliases in candidate_aliases):
+            _plex_delete_playlist(url, token, rating_key)
+            deleted_titles.append(title)
+
+    return deleted_titles
 
 
 def _plex_create_audio_playlist(url: str, token: str, title: str, track_ids: list[int], replace: bool) -> None:
@@ -1146,7 +1267,7 @@ def _lookup_track_ids_in_plex_db(plex_db: str, tracks: list[dict[str, str]]) -> 
 def api_pl_plex_delete():
     _require_pld()
     data = request.get_json(force=True)
-    url = (data.get("url") or os.environ.get("PLEX_URL", "http://127.0.0.1:32400")).strip()
+    url = (data.get("url") or os.environ.get("PLEX_URL", _default_plex_url())).strip()
     token = (data.get("token") or os.environ.get("PLEX_TOKEN", "")).strip()
     rating_key = str(data.get("rating_key") or "").strip()
     playlist_name = str(data.get("playlist_name") or "").strip()
@@ -1160,7 +1281,19 @@ def api_pl_plex_delete():
         if not rating_key:
             client = pld.PlexPlaylistClient(url, token)
             playlists = client.list_all(types=("audio", "video", "photo"), include_smart=True)
+
+            # 1) Match strict
             matches = [p for p in playlists if p.title.casefold() == playlist_name.casefold()]
+
+            # 2) Match tolérant (slug/underscore/sans emoji/sans compteur)
+            if not matches:
+                wanted_aliases = _playlist_name_aliases(playlist_name)
+                fuzzy: list[Any] = []
+                for p in playlists:
+                    if wanted_aliases & _playlist_name_aliases(p.title):
+                        fuzzy.append(p)
+                matches = fuzzy
+
             if not matches:
                 return jsonify(error=f"Playlist introuvable: {playlist_name}"), 404
             if len(matches) > 1:
@@ -1178,14 +1311,72 @@ def api_pl_plex_delete():
     return jsonify(ok=True, rating_key=rating_key, playlist_name=playlist_name)
 
 
+@app.post("/playlists/delete")
+def playlists_delete_form():
+    """Fallback HTML form deletion for browsers/UI states where JS deletion fails."""
+    url = (request.form.get("url") or os.environ.get("PLEX_URL", _default_plex_url())).strip()
+    token = (request.form.get("token") or os.environ.get("PLEX_TOKEN", "")).strip()
+    rating_key = str(request.form.get("rating_key") or "").strip()
+    playlist_name = str(request.form.get("playlist_name") or "").strip()
+    tab = str(request.form.get("tab") or "plex").strip() or "plex"
+
+    query_args: dict[str, str] = {}
+    if not token:
+        query_args["delete_error"] = "PLEX_TOKEN manquant"
+        return redirect(url_for("playlists_page", **query_args) + f"#pl-{tab}")
+
+    try:
+        if not rating_key and playlist_name:
+            client = pld.PlexPlaylistClient(url, token)
+            playlists = client.list_all(types=("audio", "video", "photo"), include_smart=True)
+            matches = [p for p in playlists if p.title.casefold() == playlist_name.casefold()]
+            if not matches:
+                wanted_aliases = _playlist_name_aliases(playlist_name)
+                matches = [p for p in playlists if wanted_aliases & _playlist_name_aliases(p.title)]
+            if not matches:
+                raise RuntimeError(f"Playlist introuvable: {playlist_name}")
+            if len(matches) > 1:
+                raise RuntimeError(f"Nom ambigu: {playlist_name}")
+            rating_key = str(matches[0].rating_key)
+            playlist_name = matches[0].title
+
+        if not rating_key:
+            raise RuntimeError("rating_key ou playlist_name requis")
+
+        _plex_delete_playlist(url, token, rating_key)
+        query_args["deleted"] = playlist_name or rating_key
+    except Exception as exc:
+        query_args["delete_error"] = str(exc)
+
+    return redirect(url_for("playlists_page", **query_args) + f"#pl-{tab}")
+
+
 @app.post("/api/playlists/import/run")
 def api_pl_import_run():
     data = request.get_json(force=True)
     source = str(data.get("source") or "spotify").strip().lower()
+    playlist_url = str(data.get("playlist_url") or "").strip()
     destination = str(data.get("destination") or "").strip()
     mode = str(data.get("mode") or "replace").strip().lower()
-    url = (data.get("url") or os.environ.get("PLEX_URL", "http://127.0.0.1:32400")).strip()
+    url = (data.get("url") or os.environ.get("PLEX_URL", _default_plex_url())).strip()
     token = (data.get("token") or os.environ.get("PLEX_TOKEN", "")).strip()
+
+    if playlist_url and not playlist_url.lower().startswith(("http://", "https://")):
+        return jsonify(error="Lien playlist invalide: utilisez http:// ou https://"), 400
+
+    # Auto-détection simple de source si un lien brut est fourni.
+    if playlist_url:
+        lower_url = playlist_url.lower()
+        if "open.spotify.com" in lower_url:
+            source = "spotify"
+        elif "youtube.com" in lower_url or "youtu.be" in lower_url:
+            source = "youtube"
+        elif "deezer.com" in lower_url:
+            source = "deezer"
+        elif "music.apple.com" in lower_url:
+            source = "apple_music"
+        elif "tidal.com" in lower_url:
+            source = "tidal"
 
     if not destination:
         return jsonify(error="Dossier de destination requis"), 400
@@ -1210,8 +1401,12 @@ def api_pl_import_run():
         "--plex-db", str(plex_db),
         "--plex-url", url,
         "--plex-token", token,
+        "--map-by-basename",
         "--apply",
     ]
+    audio_library = os.environ.get("AUDIO_LIBRARY", "").strip()
+    if audio_library:
+        cmd.extend(["--entries-base-dir", audio_library])
     if mode == "replace":
         cmd.append("--replace")
     else:
@@ -1223,8 +1418,10 @@ def api_pl_import_run():
         run_id=run.run_id,
         source=source,
         mode=mode,
+        playlist_url=playlist_url,
         destination=str(dest_path),
         cmd=cmd,
+        note="Lien brut reçu. Le workflow doit être configuré côté source pour pouvoir importer.",
     )
 
 
@@ -1236,7 +1433,7 @@ def api_pl_import_soundiiz():
     source = str(data.get("source") or "soundiiz").strip().lower()
     mode = str(data.get("mode") or "replace").strip().lower()
     playlist_name_override = str(data.get("playlist_name") or "").strip()
-    url = (data.get("url") or os.environ.get("PLEX_URL", "http://127.0.0.1:32400")).strip()
+    url = (data.get("url") or os.environ.get("PLEX_URL", _default_plex_url())).strip()
     token = (data.get("token") or os.environ.get("PLEX_TOKEN", "")).strip()
 
     if not content:
@@ -1456,6 +1653,401 @@ def api_pl_dedupe():
     })
 
 
+# -------------------- Playlists auto — règles custom --------------------
+CUSTOM_PLAYLISTS_CONFIG = Path(os.environ.get(
+    "PLEX_CUSTOM_PLAYLISTS_CONFIG",
+    str(PROJECT_ROOT / "playlists" / "custom_auto_playlists.json"),
+))
+
+
+@app.get("/api/playlists/custom/rules")
+def api_custom_rules_get():
+    """Retourne les règles personnalisées (playlists_custom.json)."""
+    if not CUSTOM_PLAYLISTS_CONFIG.is_file():
+        return jsonify({"playlists": [], "path": str(CUSTOM_PLAYLISTS_CONFIG)})
+    try:
+        raw = json.loads(CUSTOM_PLAYLISTS_CONFIG.read_text(encoding="utf-8"))
+        raw["path"] = str(CUSTOM_PLAYLISTS_CONFIG)
+        return jsonify(raw)
+    except Exception as exc:
+        return jsonify(error=f"Lecture impossible : {exc}"), 500
+
+
+@app.post("/api/playlists/custom/rules")
+def api_custom_rules_save():
+    """Sauvegarde les règles personnalisées dans custom_auto_playlists.json."""
+    data = request.get_json(force=True) or {}
+    playlists = data.get("playlists", [])
+    if not isinstance(playlists, list):
+        return jsonify(error="'playlists' doit être une liste"), 400
+    for i, rule in enumerate(playlists):
+        if not isinstance(rule, dict):
+            return jsonify(error=f"Règle #{i + 1} : doit être un objet"), 400
+        if not str(rule.get("name", "")).strip():
+            return jsonify(error=f"Règle #{i + 1} : 'name' est requis"), 400
+    payload = {"playlists": playlists}
+    CUSTOM_PLAYLISTS_CONFIG.parent.mkdir(parents=True, exist_ok=True)
+    CUSTOM_PLAYLISTS_CONFIG.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return jsonify(ok=True, path=str(CUSTOM_PLAYLISTS_CONFIG), count=len(playlists))
+
+
+@app.post("/api/playlists/custom/generate")
+def api_custom_generate():
+    """Lance auto_playlists_plexamp.py avec la config custom (optionnel : dry_run)."""
+    data = request.get_json(force=True) or {}
+    dry_run = bool(data.get("dry_run", False))
+    plex_db = _find_plex_db()
+    cmd = ["python3", "playlists/auto_playlists_plexamp.py", "--verbose"]
+    if plex_db:
+        cmd += ["--plex-db", plex_db]
+    if CUSTOM_PLAYLISTS_CONFIG.is_file():
+        cmd += ["--custom-config", str(CUSTOM_PLAYLISTS_CONFIG)]
+    if dry_run:
+        cmd += ["--dry-run"]
+    run = runner.launch_custom("playlists_auto_custom", cmd)
+    return jsonify(ok=True, run_id=run.run_id, dry_run=dry_run, cmd=cmd)
+
+
+@app.post("/api/playlists/posters/generate")
+def api_generate_posters_only():
+    """Lance la régénération des posters auto depuis l'UI."""
+    data = request.get_json(force=True) or {}
+    style_config_raw = str(data.get("style_config") or "").strip()
+
+    plex_db = _find_plex_db()
+    cmd = ["python3", "playlists/auto_playlists_plexamp.py", "--verbose", "--posters-only"]
+    if plex_db:
+        cmd += ["--plex-db", plex_db]
+
+    if style_config_raw:
+        style_path = Path(style_config_raw).expanduser()
+        if not style_path.is_file():
+            return jsonify(error=f"Style poster introuvable: {style_path}"), 400
+        # Compatibilité: certaines versions du script ne supportent pas
+        # --poster-style-config mais lisent déjà PLEX_POSTER_STYLE_CONFIG.
+        os.environ["PLEX_POSTER_STYLE_CONFIG"] = str(style_path)
+    else:
+        os.environ.pop("PLEX_POSTER_STYLE_CONFIG", None)
+
+    run = runner.launch_custom("playlists_posters_only", cmd)
+    return jsonify(ok=True, run_id=run.run_id, cmd=cmd, style_config=style_config_raw)
+
+
+def _find_poster_background(title: str, style: dict) -> Optional[Path]:
+    """Cherche une image de fond dans poster_backgrounds/ correspondant au titre."""
+    import re as _re
+    bg_dir_raw = str(style.get("backgrounds_dir", "")).strip()
+    if bg_dir_raw:
+        bg_dir = Path(bg_dir_raw).expanduser()
+    else:
+        bg_dir = PROJECT_ROOT / "playlists" / "poster_backgrounds"
+
+    if not bg_dir.is_dir():
+        return None
+
+    title_lower = title.lower()
+    title_normalized = _re.sub(r"['''\(\)\[\]&,!?]", " ", title_lower)
+    title_words = set(title_normalized.split())
+
+    EXTS = ('.jpg', '.jpeg', '.png', '.webp')
+    best: Optional[Path] = None
+    best_score = 0
+
+    for img_file in sorted(bg_dir.iterdir()):
+        if img_file.suffix.lower() not in EXTS:
+            continue
+        stem = img_file.stem.lower().replace('_', ' ').replace('-', ' ')
+        stem_words = set(stem.split())
+        score = len(stem_words & title_words)
+        if stem in title_lower:
+            score += len(stem_words)
+        if score > best_score:
+            best_score = score
+            best = img_file
+
+    return best if best_score > 0 else None
+
+
+def _make_poster_preview_png(title: str, count: Optional[int], style: dict) -> bytes:
+    """Génère un poster de prévisualisation et retourne les octets PNG."""
+    import colorsys
+    from PIL import Image, ImageDraw, ImageFont
+
+    SIZE = int(style.get("size", 600))
+    OVERLAY_ALPHA = int(style.get("overlay_alpha", 100))
+    TITLE_SIZE = int(style.get("title_size", 44))
+    SUBTITLE_SIZE = int(style.get("subtitle_size", 24))
+    EMOJI_SIZE = int(style.get("emoji_size", 80))
+    TITLE_START_Y = int(style.get("title_start_y", 300))
+    TITLE_LINE_STEP = int(style.get("title_line_step", 50))
+    TEXT_PADDING = int(style.get("text_padding", 60))
+    TITLE_COLOR = tuple(style.get("title_color", [255, 255, 255, 255]))
+    TITLE_SHADOW_COLOR = tuple(style.get("title_shadow_color", [0, 0, 0, 180]))
+    SUBTITLE_COLOR = tuple(style.get("subtitle_color", [200, 200, 200, 220]))
+    LINE_COLOR = tuple(style.get("line_color", [255, 255, 255, 80]))
+    FONT_PATH = str(style.get("font_path", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"))
+    EMOJI_FONT_PATH = str(style.get("emoji_font_path", "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf"))
+
+    # Trouver le thème (emoji + couleurs)
+    title_lower = title.lower()
+    emoji = str(style.get("default_emoji", "🎵"))
+    default_colors = style.get("default_colors", [[70, 70, 140], [120, 120, 220]])
+    c1, c2 = list(default_colors[0]), list(default_colors[1])
+
+    matched = False
+    for theme in style.get("themes", []):
+        keywords = theme.get("keywords", [])
+        if not keywords:
+            continue
+        match_mode = theme.get("match", "all")
+        is_match = any(k in title_lower for k in keywords) if match_mode == "any" else all(k in title_lower for k in keywords)
+        if is_match:
+            colors = theme.get("colors", [[80, 80, 160], [150, 150, 230]])
+            emoji = theme.get("emoji", "🎵")
+            c1, c2 = list(colors[0]), list(colors[1])
+            matched = True
+            break
+
+    if not matched and not style.get("default_colors"):
+        h = hash(title) % 360
+        r1, g1, b1 = [int(c * 255) for c in colorsys.hsv_to_rgb(h / 360, 0.7, 0.6)]
+        r2, g2, b2 = [int(c * 255) for c in colorsys.hsv_to_rgb(((h + 60) % 360) / 360, 0.7, 0.8)]
+        c1, c2 = [r1, g1, b1], [r2, g2, b2]
+
+    # Fond : image custom ou dégradé diagonal de fallback
+    bg_path = _find_poster_background(title, style)
+    if bg_path:
+        try:
+            img = Image.open(bg_path).convert('RGB').resize((SIZE, SIZE), Image.LANCZOS)
+        except Exception:
+            bg_path = None
+
+    if not bg_path:
+        img = Image.new('RGB', (SIZE, SIZE))
+        for y in range(SIZE):
+            for x in range(SIZE):
+                t = (x + y) / (2 * SIZE)
+                r = int(c1[0] + (c2[0] - c1[0]) * t)
+                g = int(c1[1] + (c2[1] - c1[1]) * t)
+                b = int(c1[2] + (c2[2] - c1[2]) * t)
+                img.putpixel((x, y), (r, g, b))
+
+    overlay = Image.new('RGBA', (SIZE, SIZE), (0, 0, 0, OVERLAY_ALPHA))
+    img = img.convert('RGBA')
+    img = Image.alpha_composite(img, overlay)
+    draw = ImageDraw.Draw(img)
+
+    # Emoji
+    try:
+        emoji_font = ImageFont.truetype(EMOJI_FONT_PATH, EMOJI_SIZE)
+        bbox = draw.textbbox((0, 0), emoji, font=emoji_font)
+        ew = bbox[2] - bbox[0]
+        draw.text(((SIZE - ew) // 2, 140), emoji, font=emoji_font, embedded_color=True)
+    except Exception:
+        pass
+
+    # Titre
+    display_title = title
+    if bool(style.get("strip_auto_prefix", True)):
+        display_title = display_title.replace('[Auto]', '').strip()
+    if bool(style.get("strip_count_suffix", True)):
+        display_title = re.sub(r'\s*\(\d+ titres?\)\s*$', '', display_title)
+
+    try:
+        font_title = ImageFont.truetype(FONT_PATH, TITLE_SIZE)
+        font_sub = ImageFont.truetype(FONT_PATH, SUBTITLE_SIZE)
+    except Exception:
+        font_title = ImageFont.load_default()
+        font_sub = ImageFont.load_default()
+
+    words = display_title.split()
+    lines: list[str] = []
+    line = ""
+    for w in words:
+        test = f"{line} {w}".strip()
+        bbox = draw.textbbox((0, 0), test, font=font_title)
+        if bbox[2] - bbox[0] > SIZE - TEXT_PADDING:
+            if line:
+                lines.append(line)
+            line = w
+        else:
+            line = test
+    if line:
+        lines.append(line)
+
+    y_pos = TITLE_START_Y
+    for ln in lines:
+        bbox = draw.textbbox((0, 0), ln, font=font_title)
+        tw = bbox[2] - bbox[0]
+        draw.text(((SIZE - tw) // 2 + 2, y_pos + 2), ln, fill=TITLE_SHADOW_COLOR, font=font_title)
+        draw.text(((SIZE - tw) // 2, y_pos), ln, fill=TITLE_COLOR, font=font_title)
+        y_pos += TITLE_LINE_STEP
+
+    draw.line([(TEXT_PADDING, y_pos + 10), (SIZE - TEXT_PADDING, y_pos + 10)], fill=LINE_COLOR, width=2)
+
+    if count is not None:
+        sub = f"{count} titres"
+        bbox = draw.textbbox((0, 0), sub, font=font_sub)
+        sw = bbox[2] - bbox[0]
+        draw.text(((SIZE - sw) // 2, y_pos + 20), sub, fill=SUBTITLE_COLOR, font=font_sub)
+
+    img = img.convert('RGB')
+    buf = io.BytesIO()
+    img.save(buf, format='PNG')
+    return buf.getvalue()
+
+
+@app.get("/api/playlists/poster/preview")
+def api_poster_preview():
+    """Génère et retourne une image PNG de prévisualisation d'un poster de playlist."""
+    try:
+        from PIL import Image  # noqa: F401
+    except ImportError:
+        return Response("Pillow non installé (pip install Pillow)", status=503, mimetype="text/plain")
+
+    name = request.args.get("name", "Ma Playlist").strip() or "Ma Playlist"
+    count_raw = request.args.get("count", "").strip()
+    count: Optional[int] = int(count_raw) if count_raw.isdigit() else None
+    style_path_raw = request.args.get("style", "").strip()
+
+    style: dict = {}
+    if style_path_raw:
+        sp = Path(style_path_raw).expanduser()
+        if sp.is_file():
+            try:
+                style = json.loads(sp.read_text())
+            except Exception:
+                pass
+
+    # Style par défaut si rien de fourni
+    if not style:
+        default_sp = PROJECT_ROOT / "playlists" / "poster_style.default.json"
+        if default_sp.is_file():
+            try:
+                style = json.loads(default_sp.read_text())
+            except Exception:
+                pass
+
+    try:
+        png = _make_poster_preview_png(name, count, style)
+    except Exception as exc:
+        return Response(f"Erreur génération: {exc}", status=500, mimetype="text/plain")
+
+    return Response(png, mimetype="image/png", headers={
+        "Cache-Control": "no-store",
+    })
+
+
+def _build_auto_playlists_snapshot() -> tuple[PlexAmpAutoPlaylist, dict[str, list[dict[str, Any]]], list[dict[str, Any]], str]:
+    """Construit un snapshot des playlists auto générées pour preview/import sélectif."""
+    if PlexAmpAutoPlaylist is None:
+        raise RuntimeError(f"Moteur playlists auto indisponible: {_auto_pl_err}")
+
+    plex_db = _find_plex_db()
+    if not plex_db:
+        raise RuntimeError("Base Plex introuvable")
+
+    generator = PlexAmpAutoPlaylist(plex_db_path=plex_db, verbose=False)
+    tracks = generator.get_track_data()
+    if not tracks:
+        raise RuntimeError("Aucune piste détectée dans la base Plex")
+
+    playlists = generator._build_all_playlists(  # pylint: disable=protected-access
+        tracks,
+        custom_config=str(CUSTOM_PLAYLISTS_CONFIG) if CUSTOM_PLAYLISTS_CONFIG.is_file() else None,
+    )
+    return generator, playlists, tracks, plex_db
+
+
+@app.post("/api/playlists/auto/preview")
+def api_auto_preview():
+    """Prévisualise toutes les playlists auto candidates avec nombre de titres."""
+    try:
+        _, playlists, tracks, plex_db = _build_auto_playlists_snapshot()
+    except Exception as exc:
+        return jsonify(error=str(exc)), 500
+
+    items = [
+        {"name": name, "count": len(entries)}
+        for name, entries in sorted(playlists.items(), key=lambda kv: kv[0].lower())
+        if entries
+    ]
+    return jsonify(
+        ok=True,
+        playlist_count=len(items),
+        track_count=len(tracks),
+        plex_db=plex_db,
+        items=items,
+    )
+
+
+@app.post("/api/playlists/auto/apply")
+def api_auto_apply_selected():
+    """Crée uniquement les playlists cochées par l'utilisateur dans Plex."""
+    data = request.get_json(force=True) or {}
+    selected_names_raw = data.get("selected_names") or []
+    append_existing = bool(data.get("append_existing", False))
+    replace_all_existing = bool(data.get("replace_all_existing", False))
+
+    if not isinstance(selected_names_raw, list):
+        return jsonify(error="selected_names doit être une liste"), 400
+
+    selected_names = [str(x).strip() for x in selected_names_raw if str(x).strip()]
+    if not selected_names:
+        return jsonify(error="Aucune playlist sélectionnée"), 400
+
+    try:
+        generator, playlists, tracks, plex_db = _build_auto_playlists_snapshot()
+    except Exception as exc:
+        return jsonify(error=str(exc)), 500
+
+    available = set(playlists.keys())
+    unknown = [name for name in selected_names if name not in available]
+    to_apply = [name for name in selected_names if name in available]
+
+    deleted_before: list[str] = []
+    if replace_all_existing:
+        url = os.environ.get("PLEX_URL", _default_plex_url())
+        token = os.environ.get("PLEX_TOKEN", "")
+        if not token:
+            return jsonify(error="PLEX_TOKEN manquant: impossible de supprimer les playlists existantes"), 400
+        try:
+            deleted_before = _plex_delete_matching_audio_playlists(url, token, list(playlists.keys()))
+        except Exception as exc:
+            return jsonify(error=f"Suppression des playlists existantes impossible: {exc}"), 500
+
+    effective_append_existing = append_existing and not replace_all_existing
+
+    created: list[dict[str, Any]] = []
+    failed: list[dict[str, Any]] = []
+    for name in to_apply:
+        entries = playlists.get(name) or []
+        ok = generator.save_playlist_to_plex(name, entries, append_existing=effective_append_existing)
+        if ok:
+            created.append({"name": name, "count": len(entries)})
+        else:
+            failed.append({"name": name, "count": len(entries)})
+
+    return jsonify(
+        ok=len(failed) == 0,
+        plex_db=plex_db,
+        track_count=len(tracks),
+        requested=len(selected_names),
+        applied=len(to_apply),
+        created_count=len(created),
+        failed_count=len(failed),
+        unknown_count=len(unknown),
+        created=created,
+        failed=failed,
+        unknown=unknown,
+        replace_all_existing=replace_all_existing,
+        deleted_before_count=len(deleted_before),
+        deleted_before=deleted_before,
+    )
+
+
 # -------------------- Logs --------------------
 @app.get("/log/<path:name>")
 def view_log(name: str):
@@ -1579,10 +2171,14 @@ _DOCKER_ACTION_ARGS: dict[str, list[str]] = {
 def _docker_control_enabled() -> bool:
     return os.environ.get("WEBUI_ALLOW_DOCKER_CONTROL", "0") == "1"
 
+
+def _docker_disabled_response():
+    return jsonify(ok=False, error="Contrôle Docker désactivé par sécurité (WEBUI_ALLOW_DOCKER_CONTROL=0)"), 403
+
 @app.post("/api/docker/<action>")
 def api_docker_action(action: str):
     if not _docker_control_enabled():
-        return jsonify(ok=False, error="Contrôle Docker désactivé par sécurité (WEBUI_ALLOW_DOCKER_CONTROL=0)"), 403
+        return _docker_disabled_response()
     if action not in _DOCKER_ACTION_ARGS:
         return jsonify(ok=False, error="Action inconnue"), 400
 
@@ -1617,7 +2213,7 @@ def api_docker_action(action: str):
 def api_docker_services():
     """Liste des services docker-compose disponibles pour consultation des logs."""
     if not _docker_control_enabled():
-        return jsonify(ok=False, error="Contrôle Docker désactivé par sécurité (WEBUI_ALLOW_DOCKER_CONTROL=0)"), 403
+        return _docker_disabled_response()
     try:
         ok, result, cmd = _run_compose(["config", "--services"], timeout=30)
     except FileNotFoundError:
@@ -1632,6 +2228,9 @@ def api_docker_services():
 @app.get("/api/docker/logs")
 def api_docker_logs():
     """Lit les logs docker d'un service (ou tous les services si vide)."""
+    if not _docker_control_enabled():
+        return _docker_disabled_response()
+
     service = (request.args.get("service") or "").strip()
     tail = int(request.args.get("tail", 300))
     tail = min(max(tail, 20), 5000)
@@ -1700,6 +2299,9 @@ def api_logs_cleanup():
         return jsonify(ok=True, scope="app", deleted=deleted, skipped=skipped)
 
     if scope == "docker":
+        if not _docker_control_enabled():
+            return _docker_disabled_response()
+
         # Prune uniquement les ressources inutilisées, sans arrêter les services actifs.
         try:
             res = subprocess.run(

@@ -14,23 +14,29 @@
     <h2>Logs Docker</h2>
     <span class="section-meta">Lecture de tous les services du compose</span>
   </div>
+  {% if not docker_control_enabled %}
+  <div class="notice notice-warn compact-notice">
+    <strong>Contrôle Docker désactivé</strong>
+    <span>Les lectures de logs Docker et le nettoyage Docker restent masqués tant que <code>WEBUI_ALLOW_DOCKER_CONTROL=1</code> n'est pas activé.</span>
+  </div>
+  {% endif %}
   <div class="docker-log-toolbar">
     <label>
       Service
-      <select id="docker-service">
+      <select id="docker-service" {% if not docker_control_enabled %}disabled{% endif %}>
         <option value="">Tous</option>
       </select>
     </label>
     <label>
       Lignes
-      <input id="docker-tail" type="number" value="300" min="20" max="5000" />
+      <input id="docker-tail" type="number" value="300" min="20" max="5000" {% if not docker_control_enabled %}disabled{% endif %} />
     </label>
-    <button class="btn secondary" onclick="loadDockerLogs()">Rafraîchir</button>
+    <button class="btn secondary" onclick="loadDockerLogs()" {% if not docker_control_enabled %}disabled{% endif %}>Rafraîchir</button>
     <button class="btn ghost" onclick="cleanupAppLogs()">Supprimer logs applicatifs</button>
-    <button class="btn danger" onclick="cleanupDocker()">Docker prune</button>
+    <button class="btn danger" onclick="cleanupDocker()" {% if not docker_control_enabled %}disabled{% endif %}>Docker prune</button>
   </div>
   <div id="docker-log-msg"></div>
-  <pre id="docker-log-output" class="docker-log-output">Chargement des services Docker…</pre>
+  <pre id="docker-log-output" class="docker-log-output">{% if docker_control_enabled %}Chargement des services Docker…{% else %}Lecture Docker indisponible tant que le contrôle Docker est désactivé.{% endif %}</pre>
 </section>
 
 <section class="stack">
@@ -133,6 +139,8 @@ async function cleanupDocker() {
   }
 }
 
+{% if docker_control_enabled %}
 loadDockerServices().then(loadDockerLogs);
+{% endif %}
 </script>
 {% endblock %}

@@ -31,6 +31,12 @@ body {
   min-height: 100vh;
 }
 
+.page-frame {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 18px 20px 28px;
+}
+
 a { color: var(--primary); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
@@ -47,18 +53,26 @@ code {
 }
 
 /* ─── Header ─────────────────────────────────────────────── */
-header {
+.site-header {
+  position: sticky;
+  top: 12px;
+  z-index: 10;
+  display: grid;
+  gap: 12px;
+  padding: 16px 18px;
+  margin-bottom: 18px;
+  background: rgba(16, 22, 29, .88);
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 18px;
+  backdrop-filter: blur(16px);
+  box-shadow: var(--shadow);
+}
+
+.site-header-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  padding: 12px 24px;
-  background: var(--panel);
-  border-bottom: 1px solid var(--border);
-  position: sticky;
-  top: 0;
-  z-index: 10;
-  backdrop-filter: blur(10px);
+  gap: 18px;
 }
 
 .brand {
@@ -90,31 +104,77 @@ header {
   font-weight: 400;
 }
 
-header nav { display: flex; gap: 4px; }
-header nav a {
-  color: var(--muted);
-  padding: 6px 12px;
-  border-radius: 6px;
-  font-size: 13px;
+.top-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
-header nav a:hover {
+.top-nav a {
+  color: var(--muted);
+  padding: 8px 13px;
+  border-radius: 999px;
+  font-size: 13px;
+  border: 1px solid rgba(255,255,255,.08);
+  background: rgba(255,255,255,.03);
+}
+.top-nav a:hover {
   color: var(--text);
-  background: rgba(255,255,255,.05);
+  background: rgba(255,255,255,.08);
   text-decoration: none;
 }
-header nav a.active {
+.top-nav a.active {
   color: #111;
+  border-color: transparent;
   background: linear-gradient(120deg, var(--primary), var(--primary-2));
 }
 
-.runtime-strip {
-  max-width: 1100px;
-  margin: 14px auto 0;
-  padding: 0 20px;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 180px)) minmax(0, 1fr);
+.context-bar {
+  display: flex;
+  align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
 }
+
+.context-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,.08);
+  background: rgba(255,255,255,.03);
+}
+
+.context-drawer {
+  margin-left: auto;
+  min-width: min(100%, 240px);
+}
+
+.context-drawer summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,.08);
+  background: rgba(255,255,255,.03);
+  color: var(--muted);
+}
+
+.context-drawer summary::-webkit-details-marker {
+  display: none;
+}
+
+.context-drawer[open] summary {
+  color: var(--text);
+}
+
+.context-drawer-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+
 .runtime-item {
   background: linear-gradient(160deg, rgba(255,255,255,.04), rgba(255,255,255,.01));
   border: 1px solid rgba(255,255,255,.09);
@@ -141,18 +201,16 @@ header nav a.active {
 }
 
 main {
-  max-width: 1100px;
-  margin: 0 auto;
-  padding: 28px 20px 48px;
+  padding: 8px 0 34px;
 }
 
 footer {
   text-align: center;
-  padding: 20px;
+  padding: 18px 8px 0;
   color: var(--muted);
   font-size: 12px;
-  border-top: 1px solid var(--border);
-  margin-top: 40px;
+  border-top: 1px solid rgba(255,255,255,.08);
+  margin-top: 28px;
 }
 
 /* ─── Surface / Card ─────────────────────────────────────── */
@@ -384,6 +442,42 @@ footer {
 .hero-copy { color: var(--muted); max-width: 680px; margin: 0; }
 .hero-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-start; flex-shrink: 0; }
 
+.dashboard-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(260px, .8fr);
+  gap: 16px;
+  padding: 24px;
+  border-radius: 18px;
+  background: linear-gradient(150deg, rgba(255,159,67,.08), rgba(255,255,255,.02));
+  border: 1px solid rgba(255,159,67,.18);
+  box-shadow: var(--shadow);
+}
+
+.dashboard-hero-main h1 {
+  font-size: clamp(28px, 5vw, 40px);
+  margin-bottom: 10px;
+  max-width: 12ch;
+  line-height: 1;
+}
+
+.hero-focus-card {
+  align-self: stretch;
+  padding: 18px;
+  border-radius: 14px;
+  background: rgba(255,255,255,.04);
+  border: 1px solid rgba(255,255,255,.08);
+}
+
+.hero-focus-card strong {
+  display: block;
+  margin: 10px 0 8px;
+  font-size: 18px;
+}
+
+.hero-focus-card p {
+  color: var(--muted);
+}
+
 /* ─── Stats grid (index) ─────────────────────────────────── */
 .stats {
   display: grid;
@@ -395,6 +489,18 @@ footer {
 .stats .card p  { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .06em; margin: 0; }
 .stats .card.ok h3 { color: var(--ok); }
 .stats .card.err h3 { color: var(--err); }
+
+.compact-stats {
+  margin-top: 14px;
+  margin-bottom: 0;
+}
+
+.dashboard-overview {
+  display: grid;
+  grid-template-columns: minmax(0, .95fr) minmax(0, 1.25fr);
+  gap: 16px;
+  align-items: start;
+}
 
 /* ─── Job grid (index) ───────────────────────────────────── */
 .grid {
@@ -428,6 +534,59 @@ footer {
 .job-card .body strong { display: block; margin-bottom: 4px; }
 .job-card .body p { color: var(--muted); font-size: 13px; margin-bottom: 6px; }
 .job-card code { display: block; font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.job-group {
+  background: rgba(255,255,255,.02);
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 14px;
+  padding: 4px;
+}
+
+.job-group summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 16px;
+}
+
+.job-group summary::-webkit-details-marker {
+  display: none;
+}
+
+.job-group-toggle {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.job-group[open] .job-group-toggle {
+  color: var(--primary-2);
+}
+
+.compact-job-grid {
+  padding: 0 12px 12px;
+}
+
+.compact-job-card {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+}
+
+.job-card-topline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+.compact-job-card .icon {
+  width: 32px;
+  height: 32px;
+  font-size: 16px;
+}
 
 /* ─── Runs table ─────────────────────────────────────────── */
 table.runs {
@@ -712,6 +871,10 @@ label { color: var(--muted); font-size: 13px; }
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
+
+.quick-links-compact {
+  grid-template-columns: 1fr;
+}
 .quick-link-card {
   display: block;
   padding: 14px 16px;
@@ -739,6 +902,36 @@ label { color: var(--muted); font-size: 13px; }
   letter-spacing: .08em;
   font-size: 11px;
   margin-bottom: 8px;
+}
+
+.playlist-utility-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.utility-card {
+  padding: 16px;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,.08);
+  background: rgba(255,255,255,.03);
+}
+
+.utility-card-danger {
+  border-color: rgba(248,81,73,.18);
+}
+
+.utility-card-help summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.utility-card-help summary::-webkit-details-marker {
+  display: none;
 }
 
 .result-metrics {
@@ -836,19 +1029,24 @@ label { color: var(--muted); font-size: 13px; }
 
 /* ─── Responsive ─────────────────────────────────────────── */
 @media (max-width: 860px) {
-  header { flex-direction: column; align-items: flex-start; }
+  .page-frame { padding: 14px 14px 24px; }
+  .site-header { top: 8px; padding: 14px; }
+  .site-header-row { flex-direction: column; align-items: flex-start; }
+  .top-nav { width: 100%; overflow-x: auto; flex-wrap: nowrap; padding-bottom: 2px; }
+  .context-drawer { margin-left: 0; width: 100%; }
   .hero { flex-direction: column; }
+  .dashboard-hero,
+  .dashboard-overview,
+  .playlist-utility-grid { grid-template-columns: 1fr; }
   .hero h1 { font-size: 24px; }
   .stats { grid-template-columns: repeat(2, 1fr); }
   .quick-links { grid-template-columns: 1fr; }
-  .runtime-strip { grid-template-columns: 1fr; padding: 0 14px; }
   .docker-log-toolbar { align-items: stretch; }
   .docker-log-toolbar > * { width: 100%; }
   .result-list-item.with-action { flex-direction: column; align-items: flex-start; }
   .run-detail-grid,
   .config-layout,
   .summary-columns { grid-template-columns: 1fr; }
-  main { padding: 20px 14px 40px; }
 }
 
 /* ─── Import Soundiiz ────────────────────────────────────── */

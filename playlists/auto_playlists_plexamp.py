@@ -22,11 +22,28 @@ import urllib.parse
 import io
 import xml.etree.ElementTree as ET
 
-# Préfixe pour identifier les playlists auto-générées (évite collision Soundiiz)
-AUTO_PLAYLIST_PREFIX = "[Auto] "
+# Préfixe d'affichage des playlists générées.
+# Laisse vide pour ne rien afficher devant le nom des playlists.
+AUTO_PLAYLIST_PREFIX = ""
+
+# Plex sait déjà très bien filtrer les grands genres. On évite donc de dupliquer
+# des playlists trop évidentes comme Blues/Jazz/Rock/Pop.
+GENERIC_PLEX_GENRES = {
+    'alternative', 'blues', 'classical', 'country', 'easy listening',
+    'electronic', 'folk', 'hip-hop', 'jazz', 'latin', 'metal', 'new age',
+    'pop', 'pop/rock', 'r&b', 'rap', 'reggae', 'rock', 'soundtrack',
+    'vocal', 'world',
+}
 
 # Configuration API Plex
-PLEX_URL = os.getenv("PLEX_URL", "http://localhost:32400").rstrip("/")
+def _detect_default_plex_url() -> str:
+    """Retourne l'URL Plex par défaut selon le contexte d'exécution.
+    Dans Docker (/.dockerenv présent) → host.docker.internal, sinon localhost."""
+    if Path("/.dockerenv").is_file():
+        return "http://host.docker.internal:32400"
+    return "http://localhost:32400"
+
+PLEX_URL = os.getenv("PLEX_URL", _detect_default_plex_url()).rstrip("/")
 PLEX_TOKEN = os.getenv("PLEX_TOKEN", "WQQySxr3SBPY-Sn77Yuk")
 PLEX_MACHINE_ID = os.getenv("PLEX_MACHINE_ID", "e0c0f73d4bbd7109a0aad8c16b20db9da5ffa4c4")
 
@@ -157,10 +174,13 @@ class PlexAmpAutoPlaylist:
         all_playlists.update(self.create_top50_playlist(tracks))
 
         # Playlists thématiques par mots-clés (recherche dans tous les genres)
-        def _match_keywords(track, keywords):
+        def _match_keywords(track, keywords, _cache={}):
+            key = tuple(keywords)
+            if key not in _cache:
+                _cache[key] = re.compile('|'.join(r'\b' + re.escape(k) + r'\b' for k in keywords))
             searchable = ' '.join(track.get('genres', [track['genre']])).lower()
             searchable += ' ' + track['album'].lower() + ' ' + track['title'].lower()
-            return any(k in searchable for k in keywords)
+            return bool(_cache[key].search(searchable))
 
         funk_tracks = [t for t in tracks if _match_keywords(t, ['funk', 'disco', 'groove', 'boogie', 'soul'])]
         if funk_tracks:
@@ -466,8 +486,21 @@ class PlexAmpAutoPlaylist:
         return year_playlists
 
     def create_genre_playlists(self, tracks: List[Dict]) -> Dict[str, List[Dict]]:
-        """Crée des playlists par genre (utilise tous les genres de chaque piste)"""
+        """Crée des playlists de genre *curatées*.
+
+        But: éviter les doublons peu utiles avec les filtres natifs de Plex.
+        On ignore donc les genres trop larges et on ne garde que des sélections
+        plus qualitatives sur les genres plus spécifiques.
+        """
         genre_playlists = {}
+
+        def _normalize_genre(value: str) -> str:
+            return ' '.join((value or '').strip().lower().split())
+
+        def _track_score(track: Dict) -> int:
+            rating = int(track.get('rating') or 0)
+            play_count = int(track.get('play_count') or 0)
+            return (rating * 100) + play_count
         
         # Grouper par genre (une piste peut apparaître dans plusieurs genres)
         genres = {}
@@ -479,17 +512,205 @@ class PlexAmpAutoPlaylist:
                         genres[genre] = []
                     genres[genre].append(track)
         
-        # Créer playlists pour les genres avec assez de contenu
+        # Créer uniquement des playlists de genres spécifiques et vraiment utiles.
         for genre, genre_tracks in sorted(genres.items()):
-            if len(genre_tracks) >= 15:
-                playlist_name = f"{AUTO_PLAYLIST_PREFIX}🎵 {genre} ({len(genre_tracks)} titres)"
-                genre_playlists[playlist_name] = genre_tracks
+            normalized = _normalize_genre(genre)
+
+            # Plex couvre déjà très bien les grands genres basiques.
+            if normalized in GENERIC_PLEX_GENRES:
+                continue
+
+            # Éviter les tags trop vagues ou trop courts.
+            if len(normalized) < 5:
+                continue
+
+            # Garder des pistes un minimum qualifiées, puis trier par affinité.
+            curated_tracks = [
+                track for track in genre_tracks
+                if (track.get('rating') or 0) >= 6 or (track.get('play_count') or 0) >= 2
+            ]
+            curated_tracks.sort(key=_track_score, reverse=True)
+
+            # Pas assez de matière => pas de playlist dédiée.
+            if len(curated_tracks) < 20:
+                continue
+
+            selected_tracks = curated_tracks[:150]
+            playlist_name = f"{AUTO_PLAYLIST_PREFIX}🎯 {genre} essentiels ({len(selected_tracks)} titres)"
+            genre_playlists[playlist_name] = selected_tracks
         
         return genre_playlists
 
     def create_smart_playlists(self, tracks: List[Dict]) -> Dict[str, List[Dict]]:
         """Crée des playlists intelligentes basées sur l'écoute"""
         smart_playlists = {}
+
+        def _search_blob(track: Dict) -> str:
+            parts = [
+                track.get('title', ''),
+                track.get('artist', ''),
+                track.get('album', ''),
+                track.get('genre', ''),
+                ' '.join(track.get('genres', [])),
+            ]
+            return ' '.join(parts).lower()
+
+        def _has_any_keyword(track: Dict, keywords: List[str], _cache={}) -> bool:
+            blob = _search_blob(track)
+            key = tuple(keywords)
+            if key not in _cache:
+                _cache[key] = re.compile('|'.join(r'\b' + re.escape(k) + r'\b' for k in keywords))
+            return bool(_cache[key].search(blob))
+
+        def _genres_contain(track: Dict, keywords: List[str]) -> bool:
+            genres = [g.lower() for g in track.get('genres', [track.get('genre', '')])]
+            return any(keyword in genre for genre in genres for keyword in keywords)
+
+        def _score(track: Dict) -> tuple[int, int, int]:
+            return (
+                int(track.get('rating') or 0),
+                int(track.get('play_count') or 0),
+                int(track.get('duration_ms') or 0),
+            )
+
+        # Calibrage automatique global selon la qualité des métadonnées et
+        # le niveau d'activité de la bibliothèque utilisateur.
+        track_count = len(tracks)
+        rated_count = sum(1 for t in tracks if int(t.get('rating') or 0) > 0)
+        plays_non_zero = [int(t.get('play_count') or 0) for t in tracks if int(t.get('play_count') or 0) > 0]
+        rated_ratio = (rated_count / track_count) if track_count else 0.0
+        median_play_non_zero = sorted(plays_non_zero)[len(plays_non_zero) // 2] if plays_non_zero else 0
+        rating_shift = -2 if rated_ratio < 0.15 else (-1 if rated_ratio < 0.30 else 0)
+        play_shift = -2 if median_play_non_zero < 2 else (-1 if median_play_non_zero < 4 else 0)
+        min_tracks_floor = 12 if track_count < 1200 else 20
+
+        def _build_preset_playlist(
+            name: str,
+            include_keywords: List[str],
+            *,
+            exclude_keywords: Optional[List[str]] = None,
+            min_duration_ms: int = 120000,
+            max_duration_ms: int = 480000,
+            min_rating: int = 5,
+            min_play_count: int = 1,
+            limit: int = 100,
+            min_tracks: int = 20,
+            max_per_artist: int = 0,
+            fallback_min_rating: int = 5,
+            fallback_min_play_count: int = 0,
+        ) -> None:
+            """Construit une playlist preset avec fallback et diversification artiste."""
+            excludes = exclude_keywords or []
+            effective_min_rating = max(0, min(10, int(min_rating) + rating_shift))
+            effective_fallback_rating = max(0, min(10, int(fallback_min_rating) + rating_shift))
+            effective_min_play_count = max(0, int(min_play_count) + play_shift)
+            effective_fallback_play_count = max(0, int(fallback_min_play_count) + play_shift)
+            effective_min_tracks = max(min_tracks_floor, int(min_tracks))
+
+            def _match(track: Dict, rating_threshold: int, play_threshold: int) -> bool:
+                duration = int(track.get('duration_ms') or 0)
+                if duration < min_duration_ms or duration > max_duration_ms:
+                    return False
+                if (track.get('rating') or 0) < rating_threshold and (track.get('play_count') or 0) < play_threshold:
+                    return False
+                if not (_genres_contain(track, include_keywords) or _has_any_keyword(track, include_keywords)):
+                    return False
+                if excludes and (_genres_contain(track, excludes) or _has_any_keyword(track, excludes)):
+                    return False
+                return True
+
+            selected = [t for t in tracks if _match(t, effective_min_rating, effective_min_play_count)]
+            if len(selected) < effective_min_tracks:
+                selected = [t for t in tracks if _match(t, effective_fallback_rating, effective_fallback_play_count)]
+
+            selected.sort(key=_score, reverse=True)
+            if max_per_artist > 0:
+                diversified: List[Dict] = []
+                by_artist: Dict[str, int] = {}
+                for track in selected:
+                    artist_name = str(track.get('artist') or 'Unknown Artist').strip()
+                    count = by_artist.get(artist_name, 0)
+                    if count >= max_per_artist:
+                        continue
+                    by_artist[artist_name] = count + 1
+                    diversified.append(track)
+                    if len(diversified) >= limit:
+                        break
+                selected = diversified
+            else:
+                selected = selected[:limit]
+
+            if len(selected) >= effective_min_tracks:
+                smart_playlists[f"{AUTO_PLAYLIST_PREFIX}{name} ({len(selected)} titres)"] = selected
+
+        # Mots-clés de fallback par décennie (utilisés quand le tag year est vide)
+        _decade_kw_defaults: Dict[int, List[str]] = {
+            1980: ['80s', "80's", 'années 80', 'annees 80', '80er'],
+            1990: ['90s', "90's", 'années 90', 'annees 90', '90er'],
+            2000: ['2000s', "2000's", 'années 2000', 'annees 2000', '00s'],
+            2010: ['2010s', "2010's", 'années 2010', 'annees 2010', '10s'],
+        }
+
+        def _build_decade_daily_mix(
+            name: str,
+            start_year: int,
+            end_year: int,
+            *,
+            decade_keywords: Optional[List[str]] = None,
+            limit: int = 120,
+            min_tracks: int = 20,
+            max_per_artist: int = 2,
+        ) -> None:
+            """Construit un Daily Mix ciblé sur une décennie.
+
+            Utilise le tag year en priorité ; en fallback, cherche des mots-clés
+            de la décennie (ex. '80s', 'années 90') dans titre/album/artiste/genres
+            pour les pistes sans année renseignée.
+            """
+            decade = (start_year // 10) * 10
+            kw = decade_keywords or _decade_kw_defaults.get(decade, [])
+
+            def _track_matches_decade(t: Dict) -> bool:
+                year = int(t.get('year') or 0)
+                if year:
+                    return start_year <= year <= end_year
+                if not kw:
+                    return False
+                blob = ' '.join([
+                    t.get('title', ''),
+                    t.get('artist', ''),
+                    t.get('album', ''),
+                    ' '.join(t.get('genres', [t.get('genre', '')])),
+                ]).lower()
+                return any(k in blob for k in kw)
+
+            selected = [
+                t for t in tracks
+                if _track_matches_decade(t)
+                and 120000 <= int(t.get('duration_ms') or 0) <= 420000
+                and ((t.get('rating') or 0) >= 5 or (t.get('play_count') or 0) >= 1)
+            ]
+            selected.sort(key=lambda t: (
+                int(t.get('rating') or 0),
+                int(t.get('play_count') or 0),
+                int(t.get('last_played') or t.get('date_added') or 0),
+            ), reverse=True)
+
+            diversified: List[Dict] = []
+            by_artist: Dict[str, int] = {}
+            for track in selected:
+                artist_name = str(track.get('artist') or 'Unknown Artist').strip()
+                count = by_artist.get(artist_name, 0)
+                if max_per_artist > 0 and count >= max_per_artist:
+                    continue
+                by_artist[artist_name] = count + 1
+                diversified.append(track)
+                if len(diversified) >= limit:
+                    break
+
+            effective_min_tracks = max(min_tracks_floor, int(min_tracks))
+            if len(diversified) >= effective_min_tracks:
+                smart_playlists[f"{AUTO_PLAYLIST_PREFIX}{name} ({len(diversified)} titres)"] = diversified
         
         # Les plus écoutés
         most_played = sorted([t for t in tracks if t['play_count'] > 0], 
@@ -526,6 +747,1024 @@ class PlexAmpAutoPlaylist:
         if energy_tracks:
             random.shuffle(energy_tracks)
             smart_playlists[f"{AUTO_PLAYLIST_PREFIX}⚡ Mix énergique ({len(energy_tracks[:50])} titres)"] = energy_tracks[:50]
+
+        # Soirée - morceaux dansants/festifs avec un minimum de traction
+        party_keywords = [
+            'party', 'fiesta', 'dance', 'club', 'disco', 'funk', 'groove',
+            'boogie', 'house', 'edm', 'electro', 'remix', 'soirée', 'soiree'
+        ]
+        party_tracks = [
+            t for t in tracks
+            if ((t.get('rating') or 0) >= 6 or (t.get('play_count') or 0) >= 3)
+            and ((t.get('duration_ms') or 0) >= 150000)
+            and (_genres_contain(t, party_keywords) or _has_any_keyword(t, party_keywords))
+        ]
+        party_tracks.sort(key=_score, reverse=True)
+        if len(party_tracks) >= 25:
+            smart_playlists[f"{AUTO_PLAYLIST_PREFIX}🎉 Soirée ({len(party_tracks[:120])} titres)"] = party_tracks[:120]
+
+        # Conduite de nuit - morceaux plus atmosphériques, synth/electro/road vibes
+        night_keywords = [
+            'night', 'midnight', 'moon', 'drive', 'road', 'highway', 'nocturne',
+            'synth', 'dream', 'ambient', 'downtempo', 'trip-hop', 'chill'
+        ]
+        night_tracks = [
+            t for t in tracks
+            if (t.get('rating') or 0) >= 6
+            and 180000 <= (t.get('duration_ms') or 0) <= 420000
+            and (_genres_contain(t, ['synth', 'electronic', 'ambient', 'trip-hop', 'downtempo', 'new wave'])
+                 or _has_any_keyword(t, night_keywords))
+        ]
+        night_tracks.sort(key=_score, reverse=True)
+        if len(night_tracks) >= 20:
+            smart_playlists[f"{AUTO_PLAYLIST_PREFIX}🌃 Conduite de nuit ({len(night_tracks[:80])} titres)"] = night_tracks[:80]
+
+        # Focus sans voix - instrumentaux/ambient/classique/jazz doux sans vocal explicite
+        no_vocals_keywords = [
+            'instrumental', 'ambient', 'classical', 'modern classical', 'soundtrack',
+            'post-rock', 'drone', 'downtempo', 'piano', 'lofi', 'lo-fi', 'study'
+        ]
+        vocals_excluded_keywords = ['vocal', 'karaoke', 'feat.', 'featuring', 'version chant']
+        focus_tracks = [
+            t for t in tracks
+            if (t.get('rating') or 0) >= 6
+            and (t.get('duration_ms') or 0) >= 120000
+            and (_genres_contain(t, no_vocals_keywords) or _has_any_keyword(t, no_vocals_keywords))
+            and not _genres_contain(t, vocals_excluded_keywords)
+            and not _has_any_keyword(t, vocals_excluded_keywords)
+        ]
+        focus_tracks.sort(key=_score, reverse=True)
+        if len(focus_tracks) >= 20:
+            smart_playlists[f"{AUTO_PLAYLIST_PREFIX}🧠 Focus sans voix ({len(focus_tracks[:100])} titres)"] = focus_tracks[:100]
+
+        # Redécouvertes notées - bien notées mais très peu écoutées, plus strict que le simple redécouvrir
+        rediscovery_tracks = [
+            t for t in tracks
+            if (t.get('rating') or 0) >= 8 and (t.get('play_count') or 0) <= 2
+        ]
+        rediscovery_tracks.sort(key=_score, reverse=True)
+        if rediscovery_tracks:
+            smart_playlists[f"{AUTO_PLAYLIST_PREFIX}💎 Redécouvertes notées ({len(rediscovery_tracks[:80])} titres)"] = rediscovery_tracks[:80]
+
+        # Deep cuts favoris - très bien notés mais peu exposés dans l'historique d'écoute
+        deep_cuts_tracks = [
+            t for t in tracks
+            if (t.get('rating') or 0) >= 8 and 1 <= (t.get('play_count') or 0) <= 8
+        ]
+        deep_cuts_tracks.sort(key=_score, reverse=True)
+        if len(deep_cuts_tracks) >= 20:
+            smart_playlists[f"{AUTO_PLAYLIST_PREFIX}🪐 Deep cuts favoris ({len(deep_cuts_tracks[:100])} titres)"] = deep_cuts_tracks[:100]
+
+        # ADN bibliothèque - playlists intelligentes orientées usage réel.
+        # Objectif: éviter les doublons de genres Plex et proposer des sélections
+        # utiles pour (re)découvrir, consolider et varier l'écoute.
+        now = int(time.time())
+        forty_five_days = 45 * 24 * 60 * 60
+        one_hundred_twenty_days = 120 * 24 * 60 * 60
+
+        # 1) Sweet spot perso: titres bien notés, assez joués pour être validés,
+        # mais pas surexposés.
+        sweet_spot = [
+            t for t in tracks
+            if (t.get('rating') or 0) >= 7
+            and 2 <= (t.get('play_count') or 0) <= 20
+            and 150000 <= (t.get('duration_ms') or 0) <= 420000
+        ]
+        sweet_spot.sort(key=lambda t: (
+            int(t.get('rating') or 0),
+            int(t.get('play_count') or 0),
+            int(t.get('last_played') or t.get('date_added') or 0),
+        ), reverse=True)
+        if len(sweet_spot) >= 20:
+            selected = sweet_spot[:120]
+            smart_playlists[
+                f"{AUTO_PLAYLIST_PREFIX}🧬 Sweet spot perso ({len(selected)} titres)"
+            ] = selected
+
+        # 2) Rebond oublié: très bons titres oubliés depuis longtemps.
+        forgotten_gems = [
+            t for t in tracks
+            if (t.get('rating') or 0) >= 7
+            and (t.get('play_count') or 0) >= 3
+            and (
+                (t.get('last_played') and (now - t['last_played']) >= one_hundred_twenty_days)
+                or (
+                    not t.get('last_played')
+                    and t.get('date_added')
+                    and (now - t['date_added']) >= one_hundred_twenty_days
+                )
+            )
+        ]
+        if len(forgotten_gems) < 20:
+            forgotten_gems = [
+                t for t in tracks
+                if (t.get('rating') or 0) >= 6
+                and (t.get('play_count') or 0) >= 2
+                and (
+                    (t.get('last_played') and (now - t['last_played']) >= (90 * 24 * 60 * 60))
+                    or (
+                        not t.get('last_played')
+                        and t.get('date_added')
+                        and (now - t['date_added']) >= (120 * 24 * 60 * 60)
+                    )
+                )
+            ]
+        if len(forgotten_gems) < 20:
+            forgotten_gems = [
+                t for t in tracks
+                if (t.get('rating') or 0) >= 6 and (t.get('play_count') or 0) >= 2
+            ]
+        forgotten_gems.sort(key=lambda t: (
+            int(t.get('rating') or 0),
+            -int(t.get('play_count') or 0),
+            int(t.get('last_played') or 0),
+        ), reverse=True)
+        if len(forgotten_gems) >= 20:
+            selected = forgotten_gems[:100]
+            smart_playlists[
+                f"{AUTO_PLAYLIST_PREFIX}🧬 Rebond oublié ({len(selected)} titres)"
+            ] = selected
+
+        # 3) Nouvelles prometteuses: ajout récent avec signaux positifs.
+        rising_new = [
+            t for t in tracks
+            if t.get('date_added')
+            and (now - t['date_added']) <= forty_five_days
+            and (t.get('rating') or 0) >= 6
+            and (t.get('play_count') or 0) <= 5
+        ]
+        if len(rising_new) < 15:
+            rising_new = [
+                t for t in tracks
+                if t.get('date_added')
+                and (now - t['date_added']) <= (90 * 24 * 60 * 60)
+                and (t.get('rating') or 0) >= 5
+                and (t.get('play_count') or 0) <= 8
+            ]
+        rising_new.sort(key=lambda t: (
+            int(t.get('rating') or 0),
+            int(t.get('play_count') or 0),
+            int(t.get('date_added') or 0),
+        ), reverse=True)
+        if len(rising_new) >= 15:
+            selected = rising_new[:100]
+            smart_playlists[
+                f"{AUTO_PLAYLIST_PREFIX}🧬 Nouvelles prometteuses ({len(selected)} titres)"
+            ] = selected
+
+        # 4) Albums pépites: albums avec plusieurs morceaux très bien notés,
+        # mais encore sous-exploités en nombre d'écoutes.
+        album_stats: Dict[str, Dict[str, Any]] = {}
+        for track in tracks:
+            album_name = str(track.get('album') or '').strip()
+            if not album_name or album_name.lower() == 'unknown album':
+                continue
+            stat = album_stats.setdefault(album_name, {
+                'tracks': [],
+                'liked_count': 0,
+                'total_plays': 0,
+            })
+            stat['tracks'].append(track)
+            stat['total_plays'] += int(track.get('play_count') or 0)
+            if int(track.get('rating') or 0) >= 8:
+                stat['liked_count'] += 1
+
+        selected_albums = {
+            album_name for album_name, stat in album_stats.items()
+            if len(stat['tracks']) >= 3
+            and stat['liked_count'] >= 2
+            and stat['total_plays'] <= max(45, len(stat['tracks']) * 8)
+        }
+        album_gems = [
+            t for t in tracks
+            if str(t.get('album') or '').strip() in selected_albums
+            and ((t.get('rating') or 0) >= 6 or (t.get('play_count') or 0) >= 1)
+        ]
+        album_gems.sort(key=_score, reverse=True)
+        if len(album_gems) >= 20:
+            selected = album_gems[:120]
+            smart_playlists[
+                f"{AUTO_PLAYLIST_PREFIX}🧬 Albums pépites ({len(selected)} titres)"
+            ] = selected
+
+        # 5) Artistes à creuser: artistes plutôt bien notés mais peu explorés.
+        artist_stats: Dict[str, Dict[str, Any]] = {}
+        for track in tracks:
+            artist_name = str(track.get('artist') or '').strip()
+            if not artist_name or artist_name.lower() == 'unknown artist':
+                continue
+            stat = artist_stats.setdefault(artist_name, {
+                'count': 0,
+                'sum_rating': 0,
+                'total_plays': 0,
+            })
+            stat['count'] += 1
+            stat['sum_rating'] += int(track.get('rating') or 0)
+            stat['total_plays'] += int(track.get('play_count') or 0)
+
+        artists_to_dig = {
+            artist_name for artist_name, stat in artist_stats.items()
+            if stat['count'] >= 4
+            and (stat['sum_rating'] / max(1, stat['count'])) >= 6
+            and stat['total_plays'] <= stat['count'] * 6
+        }
+        if len(artists_to_dig) < 5:
+            artists_to_dig = {
+                artist_name for artist_name, stat in artist_stats.items()
+                if stat['count'] >= 3
+                and (stat['sum_rating'] / max(1, stat['count'])) >= 5.5
+                and stat['total_plays'] <= stat['count'] * 10
+            }
+        artist_digs = [
+            t for t in tracks
+            if str(t.get('artist') or '').strip() in artists_to_dig
+            and (t.get('rating') or 0) >= 5
+            and (t.get('play_count') or 0) <= 12
+        ]
+        artist_digs.sort(key=_score, reverse=True)
+        if len(artist_digs) >= 20:
+            selected = artist_digs[:120]
+            smart_playlists[
+                f"{AUTO_PLAYLIST_PREFIX}🧬 Artistes à creuser ({len(selected)} titres)"
+            ] = selected
+
+        # 6) Diversité intelligente: garder la qualité mais limiter la répétition
+        # d'un même artiste pour une écoute plus variée.
+        diverse_candidates = [
+            t for t in tracks
+            if (t.get('rating') or 0) >= 6 and (t.get('play_count') or 0) >= 1
+        ]
+        diverse_candidates.sort(key=_score, reverse=True)
+        by_artist: Dict[str, int] = {}
+        diverse_selected: List[Dict] = []
+        for track in diverse_candidates:
+            artist_name = str(track.get('artist') or 'Unknown Artist').strip()
+            current = by_artist.get(artist_name, 0)
+            if current >= 2:
+                continue
+            by_artist[artist_name] = current + 1
+            diverse_selected.append(track)
+            if len(diverse_selected) >= 120:
+                break
+
+        if len(diverse_selected) >= 20:
+            smart_playlists[
+                f"{AUTO_PLAYLIST_PREFIX}🧬 Diversité intelligente ({len(diverse_selected)} titres)"
+            ] = diverse_selected
+
+        # 7) Relaxation - ambiance douce, tempos modérés, écoute confortable.
+        relax_keywords = [
+            'chill', 'ambient', 'downtempo', 'lounge', 'acoustic', 'soft',
+            'calm', 'piano', 'instrumental', 'neo soul', 'trip-hop', 'bossa',
+            'jazz', 'smooth', 'relax'
+        ]
+        relaxation = [
+            t for t in tracks
+            if (t.get('duration_ms') or 0) >= 150000
+            and ((t.get('rating') or 0) >= 5 or (t.get('play_count') or 0) >= 2)
+            and (
+                _genres_contain(t, relax_keywords)
+                or _has_any_keyword(t, relax_keywords)
+            )
+        ]
+        if len(relaxation) < 20:
+            relaxation = [
+                t for t in tracks
+                if (t.get('duration_ms') or 0) >= 150000
+                and ((t.get('rating') or 0) >= 6 or (t.get('play_count') or 0) >= 3)
+            ]
+        relaxation.sort(key=_score, reverse=True)
+        if len(relaxation) >= 20:
+            selected = relaxation[:120]
+            smart_playlists[f"{AUTO_PLAYLIST_PREFIX}🛋️ Relaxation ({len(selected)} titres)"] = selected
+
+        # 8) Repas entre amis - feel-good varié, pas trop agressif.
+        dinner_keywords = [
+            'soul', 'funk', 'groove', 'nu disco', 'disco', 'r&b', 'pop',
+            'indie', 'latin', 'afro', 'bossa', 'chanson', 'jazz', 'lounge',
+            'reggae', 'samba', 'friendly', 'dinner'
+        ]
+        dinner_exclude = ['metal', 'hardcore', 'death', 'black metal', 'grindcore']
+        dinner = [
+            t for t in tracks
+            if 150000 <= (t.get('duration_ms') or 0) <= 360000
+            and ((t.get('rating') or 0) >= 6 or (t.get('play_count') or 0) >= 3)
+            and (_genres_contain(t, dinner_keywords) or _has_any_keyword(t, dinner_keywords))
+            and not (_genres_contain(t, dinner_exclude) or _has_any_keyword(t, dinner_exclude))
+        ]
+        dinner.sort(key=_score, reverse=True)
+        if len(dinner) >= 20:
+            selected = dinner[:120]
+            smart_playlists[f"{AUTO_PLAYLIST_PREFIX}🍽️ Repas entre amis ({len(selected)} titres)"] = selected
+
+        # 9) Mojito sunset - mood warm/chill tropical/electro doux.
+        sunset_keywords = [
+            'sunset', 'summer', 'beach', 'tropical', 'balearic', 'house',
+            'deep house', 'nu disco', 'latin', 'reggaeton', 'afro', 'chill',
+            'lounge', 'ibiza', 'mojito', 'cocktail'
+        ]
+        sunset = [
+            t for t in tracks
+            if 160000 <= (t.get('duration_ms') or 0) <= 420000
+            and ((t.get('rating') or 0) >= 5 or (t.get('play_count') or 0) >= 2)
+            and (_genres_contain(t, sunset_keywords) or _has_any_keyword(t, sunset_keywords))
+        ]
+        if len(sunset) < 20:
+            sunset = [
+                t for t in tracks
+                if 160000 <= (t.get('duration_ms') or 0) <= 420000
+                and ((t.get('rating') or 0) >= 6 or (t.get('play_count') or 0) >= 3)
+                and (_genres_contain(t, ['house', 'electronic', 'latin', 'lounge', 'pop'])
+                     or _has_any_keyword(t, ['sun', 'summer', 'beach', 'chill']))
+            ]
+        sunset.sort(key=_score, reverse=True)
+        if len(sunset) >= 20:
+            selected = sunset[:100]
+            smart_playlists[f"{AUTO_PLAYLIST_PREFIX}🍹 Mojito sunset ({len(selected)} titres)"] = selected
+
+        # 10) Fête - énergie haute, titres fédérateurs et dansants.
+        party_plus_keywords = [
+            'party', 'dance', 'club', 'edm', 'electro', 'house', 'disco',
+            'funk', 'hip-hop', 'rap', 'reggaeton', 'anthem', 'festival', 'remix'
+        ]
+        party_plus = [
+            t for t in tracks
+            if (t.get('duration_ms') or 0) >= 150000
+            and ((t.get('rating') or 0) >= 6 or (t.get('play_count') or 0) >= 4)
+            and (_genres_contain(t, party_plus_keywords) or _has_any_keyword(t, party_plus_keywords))
+        ]
+        party_plus.sort(key=_score, reverse=True)
+        if len(party_plus) >= 20:
+            selected = party_plus[:140]
+            smart_playlists[f"{AUTO_PLAYLIST_PREFIX}🎊 Fête ({len(selected)} titres)"] = selected
+
+        # 11) Road trip - énergie stable et titres fédérateurs.
+        roadtrip_keywords = [
+            'road', 'drive', 'highway', 'travel', 'anthem', 'indie', 'rock',
+            'pop', 'electro', 'summer', 'route'
+        ]
+        roadtrip = [
+            t for t in tracks
+            if 150000 <= (t.get('duration_ms') or 0) <= 360000
+            and ((t.get('rating') or 0) >= 6 or (t.get('play_count') or 0) >= 3)
+            and (_genres_contain(t, roadtrip_keywords) or _has_any_keyword(t, roadtrip_keywords))
+        ]
+        roadtrip.sort(key=_score, reverse=True)
+        if len(roadtrip) >= 20:
+            selected = roadtrip[:120]
+            smart_playlists[f"{AUTO_PLAYLIST_PREFIX}🚗 Road trip ({len(selected)} titres)"] = selected
+
+        # 12) Brunch weekend - ambiance solaire, groove léger.
+        brunch_keywords = [
+            'soul', 'funk', 'jazz', 'bossa', 'lounge', 'chill', 'acoustic',
+            'neo soul', 'r&b', 'groove', 'brunch', 'weekend'
+        ]
+        brunch = [
+            t for t in tracks
+            if 140000 <= (t.get('duration_ms') or 0) <= 330000
+            and ((t.get('rating') or 0) >= 5 or (t.get('play_count') or 0) >= 2)
+            and (_genres_contain(t, brunch_keywords) or _has_any_keyword(t, brunch_keywords))
+        ]
+        brunch.sort(key=_score, reverse=True)
+        if len(brunch) >= 20:
+            selected = brunch[:100]
+            smart_playlists[f"{AUTO_PLAYLIST_PREFIX}🥐 Brunch weekend ({len(selected)} titres)"] = selected
+
+        # 13) Afterwork chill - transition douce fin de journée.
+        afterwork_keywords = [
+            'chill', 'downtempo', 'ambient', 'lounge', 'indie', 'pop',
+            'deep house', 'nu disco', 'soft', 'afterwork', 'sunset'
+        ]
+        afterwork = [
+            t for t in tracks
+            if 160000 <= (t.get('duration_ms') or 0) <= 380000
+            and ((t.get('rating') or 0) >= 5 or (t.get('play_count') or 0) >= 2)
+            and (_genres_contain(t, afterwork_keywords) or _has_any_keyword(t, afterwork_keywords))
+        ]
+        afterwork.sort(key=_score, reverse=True)
+        if len(afterwork) >= 20:
+            selected = afterwork[:120]
+            smart_playlists[f"{AUTO_PLAYLIST_PREFIX}🍸 Afterwork chill ({len(selected)} titres)"] = selected
+
+        # 14) Nuit calme - écouter tard sans casser l'ambiance.
+        calm_night_keywords = [
+            'ambient', 'piano', 'instrumental', 'classical', 'drone',
+            'downtempo', 'trip-hop', 'nocturne', 'night', 'calm'
+        ]
+        calm_night = [
+            t for t in tracks
+            if (t.get('duration_ms') or 0) >= 180000
+            and ((t.get('rating') or 0) >= 6 or (t.get('play_count') or 0) >= 1)
+            and (_genres_contain(t, calm_night_keywords) or _has_any_keyword(t, calm_night_keywords))
+        ]
+        calm_night.sort(key=_score, reverse=True)
+        if len(calm_night) >= 20:
+            selected = calm_night[:100]
+            smart_playlists[f"{AUTO_PLAYLIST_PREFIX}🌙 Nuit calme ({len(selected)} titres)"] = selected
+
+        # 15) Workout intense - haut impact, haut tempo perçu.
+        workout_keywords = [
+            'workout', 'running', 'cardio', 'gym', 'edm', 'electro',
+            'house', 'techno', 'drum and bass', 'trap', 'hip-hop', 'power'
+        ]
+        workout = [
+            t for t in tracks
+            if 130000 <= (t.get('duration_ms') or 0) <= 320000
+            and ((t.get('rating') or 0) >= 6 or (t.get('play_count') or 0) >= 4)
+            and (_genres_contain(t, workout_keywords) or _has_any_keyword(t, workout_keywords))
+        ]
+        workout.sort(key=_score, reverse=True)
+        if len(workout) >= 20:
+            selected = workout[:120]
+            smart_playlists[f"{AUTO_PLAYLIST_PREFIX}🏋️ Workout intense ({len(selected)} titres)"] = selected
+
+        # 16) Lecture & focus - peu intrusive, stable, répétable.
+        reading_keywords = [
+            'instrumental', 'ambient', 'neo classical', 'classical', 'piano',
+            'lofi', 'lo-fi', 'study', 'focus', 'soundtrack'
+        ]
+        reading = [
+            t for t in tracks
+            if (t.get('duration_ms') or 0) >= 120000
+            and ((t.get('rating') or 0) >= 6 or (t.get('play_count') or 0) >= 1)
+            and (_genres_contain(t, reading_keywords) or _has_any_keyword(t, reading_keywords))
+        ]
+        reading.sort(key=_score, reverse=True)
+        if len(reading) >= 20:
+            selected = reading[:120]
+            smart_playlists[f"{AUTO_PLAYLIST_PREFIX}📚 Lecture & focus ({len(selected)} titres)"] = selected
+
+        # 17) Dancefloor rétro - sélections festives old-school.
+        retro_party_keywords = [
+            'disco', 'funk', '80s', 'synthwave', 'new wave', 'italo',
+            'boogie', 'retro', 'dance'
+        ]
+        retro_party = [
+            t for t in tracks
+            if 150000 <= (t.get('duration_ms') or 0) <= 360000
+            and ((t.get('rating') or 0) >= 6 or (t.get('play_count') or 0) >= 3)
+            and (_genres_contain(t, retro_party_keywords) or _has_any_keyword(t, retro_party_keywords))
+        ]
+        retro_party.sort(key=_score, reverse=True)
+        if len(retro_party) >= 20:
+            selected = retro_party[:120]
+            smart_playlists[f"{AUTO_PLAYLIST_PREFIX}🪩 Dancefloor rétro ({len(selected)} titres)"] = selected
+
+        # 18) Pluie du soir - mood introspectif doux.
+        rain_keywords = [
+            'rain', 'piano', 'ambient', 'acoustic', 'indie', 'sad',
+            'melancholy', 'nocturne', 'slow jam', 'soir'
+        ]
+        rain_evening = [
+            t for t in tracks
+            if (t.get('duration_ms') or 0) >= 150000
+            and ((t.get('rating') or 0) >= 6 or (t.get('play_count') or 0) >= 2)
+            and (_genres_contain(t, rain_keywords) or _has_any_keyword(t, rain_keywords))
+        ]
+        rain_evening.sort(key=_score, reverse=True)
+        if len(rain_evening) >= 20:
+            selected = rain_evening[:100]
+            smart_playlists[f"{AUTO_PLAYLIST_PREFIX}🌧️ Pluie du soir ({len(selected)} titres)"] = selected
+
+        # 19) Matin good vibes - lancer la journée avec énergie positive.
+        morning_keywords = [
+            'morning', 'sunrise', 'sunshine', 'feel good', 'pop', 'indie', 'funk',
+            'soul', 'acoustic', 'happy', 'good vibes'
+        ]
+        morning = [
+            t for t in tracks
+            if 140000 <= (t.get('duration_ms') or 0) <= 320000
+            and ((t.get('rating') or 0) >= 5 or (t.get('play_count') or 0) >= 2)
+            and (_genres_contain(t, morning_keywords) or _has_any_keyword(t, morning_keywords))
+        ]
+        morning.sort(key=_score, reverse=True)
+        if len(morning) >= 20:
+            selected = morning[:100]
+            smart_playlists[f"{AUTO_PLAYLIST_PREFIX}☀️ Matin good vibes ({len(selected)} titres)"] = selected
+
+        # 20) Cuisine en rythme - groove léger, convivial.
+        cooking_keywords = [
+            'groove', 'funk', 'soul', 'latin', 'samba', 'bossa', 'jazz',
+            'lounge', 'chill', 'kitchen', 'cooking'
+        ]
+        cooking = [
+            t for t in tracks
+            if 140000 <= (t.get('duration_ms') or 0) <= 340000
+            and ((t.get('rating') or 0) >= 5 or (t.get('play_count') or 0) >= 2)
+            and (_genres_contain(t, cooking_keywords) or _has_any_keyword(t, cooking_keywords))
+        ]
+        cooking.sort(key=_score, reverse=True)
+        if len(cooking) >= 20:
+            selected = cooking[:100]
+            smart_playlists[f"{AUTO_PLAYLIST_PREFIX}🍳 Cuisine en rythme ({len(selected)} titres)"] = selected
+
+        # 21) Ménage boost - tempo soutenu et tracks efficaces.
+        cleaning_keywords = [
+            'dance', 'electro', 'house', 'pop', 'rock', 'workout', 'power',
+            'energy', 'boost', 'remix'
+        ]
+        cleaning = [
+            t for t in tracks
+            if 130000 <= (t.get('duration_ms') or 0) <= 330000
+            and ((t.get('rating') or 0) >= 5 or (t.get('play_count') or 0) >= 3)
+            and (_genres_contain(t, cleaning_keywords) or _has_any_keyword(t, cleaning_keywords))
+        ]
+        cleaning.sort(key=_score, reverse=True)
+        if len(cleaning) >= 20:
+            selected = cleaning[:120]
+            smart_playlists[f"{AUTO_PLAYLIST_PREFIX}🧹 Ménage boost ({len(selected)} titres)"] = selected
+
+        # 22) Bureau sans stress - concentration douce sans agressivité.
+        office_keywords = [
+            'ambient', 'instrumental', 'chill', 'lofi', 'lo-fi', 'piano',
+            'downtempo', 'focus', 'study', 'soundtrack'
+        ]
+        office = [
+            t for t in tracks
+            if (t.get('duration_ms') or 0) >= 120000
+            and ((t.get('rating') or 0) >= 6 or (t.get('play_count') or 0) >= 1)
+            and (_genres_contain(t, office_keywords) or _has_any_keyword(t, office_keywords))
+        ]
+        office.sort(key=_score, reverse=True)
+        if len(office) >= 20:
+            selected = office[:120]
+            smart_playlists[f"{AUTO_PLAYLIST_PREFIX}💻 Bureau sans stress ({len(selected)} titres)"] = selected
+
+        # 23) Golden hour - fin de journée chaude et mélodique.
+        golden_hour_keywords = [
+            'sunset', 'golden', 'chill', 'indie', 'deep house', 'lounge',
+            'neo soul', 'ambient', 'evening'
+        ]
+        golden_hour = [
+            t for t in tracks
+            if 150000 <= (t.get('duration_ms') or 0) <= 400000
+            and ((t.get('rating') or 0) >= 5 or (t.get('play_count') or 0) >= 2)
+            and (_genres_contain(t, golden_hour_keywords) or _has_any_keyword(t, golden_hour_keywords))
+        ]
+        golden_hour.sort(key=_score, reverse=True)
+        if len(golden_hour) >= 20:
+            selected = golden_hour[:100]
+            smart_playlists[f"{AUTO_PLAYLIST_PREFIX}🌅 Golden hour ({len(selected)} titres)"] = selected
+
+        # 24) Douche énergique - courtes rafales dynamiques.
+        shower_keywords = [
+            'pop', 'dance', 'electro', 'house', 'remix', 'hit', 'anthem',
+            'energy', 'party'
+        ]
+        shower = [
+            t for t in tracks
+            if 120000 <= (t.get('duration_ms') or 0) <= 280000
+            and ((t.get('rating') or 0) >= 6 or (t.get('play_count') or 0) >= 3)
+            and (_genres_contain(t, shower_keywords) or _has_any_keyword(t, shower_keywords))
+        ]
+        shower.sort(key=_score, reverse=True)
+        if len(shower) >= 20:
+            selected = shower[:80]
+            smart_playlists[f"{AUTO_PLAYLIST_PREFIX}🚿 Douche énergique ({len(selected)} titres)"] = selected
+
+        # 25) Slow love - ambiance romantique et douce.
+        slow_love_keywords = [
+            'love', 'ballad', 'soul', 'r&b', 'acoustic', 'piano',
+            'romantic', 'slow jam', 'chanson', 'jazz'
+        ]
+        slow_love = [
+            t for t in tracks
+            if 150000 <= (t.get('duration_ms') or 0) <= 420000
+            and ((t.get('rating') or 0) >= 6 or (t.get('play_count') or 0) >= 2)
+            and (_genres_contain(t, slow_love_keywords) or _has_any_keyword(t, slow_love_keywords))
+        ]
+        slow_love.sort(key=_score, reverse=True)
+        if len(slow_love) >= 20:
+            selected = slow_love[:100]
+            smart_playlists[f"{AUTO_PLAYLIST_PREFIX}❤️ Slow love ({len(selected)} titres)"] = selected
+
+        # 26) World vibes - ouverture internationale groovy/chill.
+        world_keywords = [
+            'world', 'afro', 'latin', 'reggae', 'samba', 'bossa',
+            'raï', 'rai', 'oriental', 'cumbia', 'dancehall', 'tropical'
+        ]
+        world_vibes = [
+            t for t in tracks
+            if 150000 <= (t.get('duration_ms') or 0) <= 420000
+            and ((t.get('rating') or 0) >= 5 or (t.get('play_count') or 0) >= 2)
+            and (_genres_contain(t, world_keywords) or _has_any_keyword(t, world_keywords))
+        ]
+        world_vibes.sort(key=_score, reverse=True)
+        if len(world_vibes) >= 20:
+            selected = world_vibes[:120]
+            smart_playlists[f"{AUTO_PLAYLIST_PREFIX}🌍 World vibes ({len(selected)} titres)"] = selected
+
+        # 27) Packs type plateformes streaming: mixes quotidiens, radar, rewind.
+        sixty_days = 60 * 24 * 60 * 60
+        one_year = 365 * 24 * 60 * 60
+
+        release_radar = [
+            t for t in tracks
+            if t.get('date_added')
+            and (now - int(t.get('date_added') or 0)) <= sixty_days
+            and ((t.get('rating') or 0) >= 5 or (t.get('play_count') or 0) >= 1)
+        ]
+        release_radar.sort(key=lambda t: (
+            int(t.get('date_added') or 0),
+            int(t.get('rating') or 0),
+            int(t.get('play_count') or 0),
+        ), reverse=True)
+        if len(release_radar) >= 12:
+            selected = release_radar[:150]
+            smart_playlists[f"{AUTO_PLAYLIST_PREFIX}🛰️ Release radar perso ({len(selected)} titres)"] = selected
+
+        discover_weekly = [
+            t for t in tracks
+            if (t.get('play_count') or 0) <= 2
+            and ((t.get('rating') or 0) >= 6 or (t.get('date_added') and (now - int(t.get('date_added') or 0)) <= one_year))
+        ]
+        discover_weekly.sort(key=lambda t: (
+            int(t.get('rating') or 0),
+            int(t.get('date_added') or 0),
+            -int(t.get('play_count') or 0),
+        ), reverse=True)
+        if len(discover_weekly) >= 20:
+            selected = discover_weekly[:120]
+            smart_playlists[f"{AUTO_PLAYLIST_PREFIX}🧪 Découvertes de la semaine ({len(selected)} titres)"] = selected
+
+        repeat_rewind = [
+            t for t in tracks
+            if (t.get('rating') or 0) >= 6
+            and (t.get('play_count') or 0) >= 6
+            and t.get('last_played')
+            and (now - int(t.get('last_played') or 0)) <= one_hundred_twenty_days
+        ]
+        repeat_rewind.sort(key=lambda t: (
+            int(t.get('play_count') or 0),
+            int(t.get('rating') or 0),
+            int(t.get('last_played') or 0),
+        ), reverse=True)
+        if len(repeat_rewind) < 20:
+            repeat_rewind = [
+                t for t in tracks
+                if (t.get('rating') or 0) >= 5
+                and (t.get('play_count') or 0) >= 4
+                and t.get('last_played')
+                and (now - int(t.get('last_played') or 0)) <= (180 * 24 * 60 * 60)
+            ]
+            repeat_rewind.sort(key=lambda t: (
+                int(t.get('play_count') or 0),
+                int(t.get('rating') or 0),
+                int(t.get('last_played') or 0),
+            ), reverse=True)
+        if len(repeat_rewind) >= 15:
+            selected = repeat_rewind[:120]
+            smart_playlists[f"{AUTO_PLAYLIST_PREFIX}🔁 Repeat rewind ({len(selected)} titres)"] = selected
+
+        _build_preset_playlist(
+            '🎯 Daily mix energie',
+            ['dance', 'electro', 'house', 'hip-hop', 'pop', 'running', 'workout', 'power'],
+            min_duration_ms=120000,
+            max_duration_ms=320000,
+            min_rating=6,
+            min_play_count=2,
+            limit=120,
+            min_tracks=20,
+            max_per_artist=2,
+            fallback_min_rating=5,
+            fallback_min_play_count=1,
+        )
+
+        _build_preset_playlist(
+            '😌 Daily mix chill',
+            ['chill', 'lofi', 'ambient', 'acoustic', 'lounge', 'downtempo', 'neo soul'],
+            min_duration_ms=140000,
+            max_duration_ms=420000,
+            min_rating=5,
+            min_play_count=1,
+            limit=120,
+            min_tracks=20,
+            max_per_artist=2,
+            fallback_min_rating=4,
+            fallback_min_play_count=0,
+        )
+
+        _build_preset_playlist(
+            '🌃 Daily mix night drive',
+            ['night', 'drive', 'synthwave', 'electronic', 'trip-hop', 'deep house', 'indie'],
+            min_duration_ms=160000,
+            max_duration_ms=420000,
+            min_rating=5,
+            min_play_count=1,
+            limit=120,
+            min_tracks=20,
+            max_per_artist=2,
+            fallback_min_rating=4,
+            fallback_min_play_count=0,
+        )
+
+        # Daily Mix par décennie
+        _build_decade_daily_mix('🪩 Daily Mix 80s', 1980, 1989)
+        _build_decade_daily_mix('📼 Daily Mix 90s', 1990, 1999)
+        _build_decade_daily_mix('💿 Daily Mix 2000s', 2000, 2009)
+        _build_decade_daily_mix('📱 Daily Mix 2010s', 2010, 2019)
+
+        # Mix humeur avancés
+        _build_preset_playlist(
+            '😊 Mix humeur happy',
+            ['happy', 'good vibes', 'feel good', 'sunny', 'upbeat', 'joy', 'funk', 'disco'],
+            exclude_keywords=['sad', 'melancholy', 'dark', 'doom'],
+            min_duration_ms=120000,
+            max_duration_ms=360000,
+            min_rating=5,
+            min_play_count=1,
+            limit=120,
+            min_tracks=20,
+            max_per_artist=2,
+            fallback_min_rating=4,
+            fallback_min_play_count=0,
+        )
+
+        _build_preset_playlist(
+            '🥀 Mix humeur sad',
+            ['sad', 'melancholy', 'heartbreak', 'blues', 'acoustic', 'ballad', 'piano', 'nostalgia'],
+            exclude_keywords=['party', 'workout', 'hardcore'],
+            min_duration_ms=140000,
+            max_duration_ms=460000,
+            min_rating=5,
+            min_play_count=0,
+            limit=120,
+            min_tracks=20,
+            max_per_artist=2,
+            fallback_min_rating=4,
+            fallback_min_play_count=0,
+        )
+
+        _build_preset_playlist(
+            '🔥 Mix humeur intense',
+            ['intense', 'power', 'workout', 'metal', 'hard rock', 'drum and bass', 'electro'],
+            min_duration_ms=110000,
+            max_duration_ms=360000,
+            min_rating=6,
+            min_play_count=2,
+            limit=120,
+            min_tracks=20,
+            max_per_artist=2,
+            fallback_min_rating=5,
+            fallback_min_play_count=1,
+        )
+
+        _build_preset_playlist(
+            '💋 Mix humeur sensuel',
+            ['sensual', 'sensuel', 'r&b', 'neo soul', 'slow jam', 'intimate', 'velvet'],
+            exclude_keywords=['hardcore', 'metal', 'workout'],
+            min_duration_ms=150000,
+            max_duration_ms=460000,
+            min_rating=5,
+            min_play_count=1,
+            limit=100,
+            min_tracks=20,
+            max_per_artist=2,
+            fallback_min_rating=4,
+            fallback_min_play_count=0,
+        )
+
+        _build_preset_playlist(
+            '🧠 Mix humeur deep focus',
+            ['deep focus', 'focus', 'study', 'instrumental', 'ambient', 'minimal', 'piano', 'classical'],
+            exclude_keywords=['vocal', 'karaoke', 'feat.', 'featuring'],
+            min_duration_ms=140000,
+            max_duration_ms=520000,
+            min_rating=5,
+            min_play_count=0,
+            limit=140,
+            min_tracks=20,
+            max_per_artist=3,
+            fallback_min_rating=4,
+            fallback_min_play_count=0,
+        )
+
+        _build_preset_playlist(
+            '🌙 Mix humeur sleep',
+            ['sleep', 'night', 'calm', 'ambient', 'meditation', 'lullaby', 'soft', 'dream'],
+            exclude_keywords=['workout', 'intense', 'hardcore', 'party'],
+            min_duration_ms=150000,
+            max_duration_ms=600000,
+            min_rating=4,
+            min_play_count=0,
+            limit=140,
+            min_tracks=20,
+            max_per_artist=3,
+            fallback_min_rating=3,
+            fallback_min_play_count=0,
+        )
+
+        # 28+) Banque premium: presets supplémentaires avec fallback intelligent.
+        premium_presets = [
+            {
+                'name': '🌆 Terrasse chill',
+                'include': ['chill', 'lounge', 'nu disco', 'deep house', 'sunset', 'indie', 'soul'],
+                'exclude': ['grindcore', 'black metal', 'death metal'],
+                'min_d': 150000,
+                'max_d': 420000,
+                'min_r': 5,
+                'min_p': 1,
+                'limit': 120,
+                'min_t': 20,
+                'max_artist': 2,
+            },
+            {
+                'name': '🌌 Late night electronic',
+                'include': ['electronic', 'ambient', 'downtempo', 'trip-hop', 'synth', 'deep house'],
+                'min_d': 170000,
+                'max_d': 480000,
+                'min_r': 6,
+                'min_p': 1,
+                'limit': 110,
+                'min_t': 20,
+                'max_artist': 2,
+            },
+            {
+                'name': '🕯️ Diner romantique',
+                'include': ['ballad', 'soul', 'r&b', 'jazz', 'acoustic', 'piano', 'chanson', 'romantic'],
+                'exclude': ['hardcore', 'metal'],
+                'min_d': 150000,
+                'max_d': 420000,
+                'min_r': 6,
+                'min_p': 1,
+                'limit': 100,
+                'min_t': 20,
+                'max_artist': 2,
+            },
+            {
+                'name': '🎮 Gaming focus',
+                'include': ['electronic', 'synthwave', 'instrumental', 'soundtrack', 'ambient', 'lofi'],
+                'min_d': 120000,
+                'max_d': 420000,
+                'min_r': 5,
+                'min_p': 0,
+                'limit': 130,
+                'min_t': 20,
+                'max_artist': 3,
+                'fallback_r': 4,
+            },
+            {
+                'name': '🧾 Deep work sans parole',
+                'include': ['instrumental', 'ambient', 'classical', 'neo classical', 'piano', 'study'],
+                'exclude': ['vocal', 'karaoke', 'feat.', 'featuring'],
+                'min_d': 140000,
+                'max_d': 500000,
+                'min_r': 5,
+                'min_p': 0,
+                'limit': 140,
+                'min_t': 20,
+                'max_artist': 3,
+                'fallback_r': 4,
+            },
+            {
+                'name': '🧼 Dimanche reset',
+                'include': ['chill', 'acoustic', 'indie', 'soul', 'jazz', 'downtempo', 'folk'],
+                'min_d': 140000,
+                'max_d': 420000,
+                'min_r': 5,
+                'min_p': 1,
+                'limit': 120,
+                'min_t': 20,
+                'max_artist': 2,
+            },
+            {
+                'name': '🧳 Evasion urbaine',
+                'include': ['indie', 'electro', 'trip-hop', 'world', 'latin', 'afro', 'city', 'urban'],
+                'min_d': 140000,
+                'max_d': 420000,
+                'min_r': 5,
+                'min_p': 1,
+                'limit': 120,
+                'min_t': 20,
+                'max_artist': 2,
+            },
+            {
+                'name': '🏖️ Pool party',
+                'include': ['summer', 'house', 'dance', 'latin', 'tropical', 'reggaeton', 'party'],
+                'min_d': 140000,
+                'max_d': 360000,
+                'min_r': 5,
+                'min_p': 2,
+                'limit': 120,
+                'min_t': 20,
+                'max_artist': 2,
+                'fallback_p': 1,
+            },
+            {
+                'name': '🚦 Before going out',
+                'include': ['dance', 'house', 'electro', 'pop', 'hip-hop', 'party', 'remix'],
+                'min_d': 130000,
+                'max_d': 320000,
+                'min_r': 6,
+                'min_p': 2,
+                'limit': 100,
+                'min_t': 20,
+                'max_artist': 2,
+                'fallback_r': 5,
+            },
+            {
+                'name': '👟 Marche active',
+                'include': ['pop', 'indie', 'electro', 'funk', 'hip-hop', 'walking', 'groove'],
+                'min_d': 140000,
+                'max_d': 360000,
+                'min_r': 5,
+                'min_p': 2,
+                'limit': 120,
+                'min_t': 20,
+                'max_artist': 2,
+            },
+            {
+                'name': '🎤 Karaoke entre amis',
+                'include': ['pop', 'rock', 'chanson', 'hit', 'anthem', 'karaoke'],
+                'min_d': 150000,
+                'max_d': 420000,
+                'min_r': 5,
+                'min_p': 2,
+                'limit': 120,
+                'min_t': 20,
+                'max_artist': 2,
+            },
+            {
+                'name': '🕺 Hits sans pause',
+                'include': ['hit', 'pop', 'dance', 'electro', 'r&b', 'rap', 'remix'],
+                'min_d': 120000,
+                'max_d': 300000,
+                'min_r': 6,
+                'min_p': 3,
+                'limit': 140,
+                'min_t': 20,
+                'max_artist': 2,
+                'fallback_r': 5,
+            },
+            {
+                'name': '🏃 Running',
+                'include': ['running', 'cardio', 'workout', 'power', 'edm', 'electro', 'drum and bass', 'hip-hop'],
+                'min_d': 120000,
+                'max_d': 320000,
+                'min_r': 6,
+                'min_p': 3,
+                'limit': 140,
+                'min_t': 20,
+                'max_artist': 2,
+                'fallback_r': 5,
+                'fallback_p': 2,
+            },
+            {
+                'name': '🏋️ Workout performance',
+                'include': ['workout', 'gym', 'training', 'cardio', 'crossfit', 'power', 'edm', 'electro', 'house', 'hip-hop'],
+                'min_d': 120000,
+                'max_d': 320000,
+                'min_r': 5,
+                'min_p': 2,
+                'limit': 140,
+                'min_t': 20,
+                'max_artist': 2,
+                'fallback_r': 4,
+                'fallback_p': 1,
+            },
+            {
+                'name': '🧘 Yoga',
+                'include': ['yoga', 'meditation', 'ambient', 'piano', 'instrumental', 'new age', 'calm', 'healing', 'zen'],
+                'exclude': ['metal', 'hardcore', 'grindcore'],
+                'min_d': 170000,
+                'max_d': 600000,
+                'min_r': 5,
+                'min_p': 0,
+                'limit': 120,
+                'min_t': 20,
+                'max_artist': 3,
+                'fallback_r': 4,
+            },
+            {
+                'name': '💆 Session massage tantrique',
+                'include': ['massage', 'tantra', 'tantric', 'sensual', 'downtempo', 'ambient', 'meditation', 'healing', 'slow jam', 'tibetan', 'world music'],
+                'exclude': ['hardcore', 'metal', 'grindcore'],
+                'min_d': 180000,
+                'max_d': 600000,
+                'min_r': 5,
+                'min_p': 0,
+                'limit': 100,
+                'min_t': 20,
+                'max_artist': 2,
+                'fallback_r': 4,
+            },
+        ]
+
+        for preset in premium_presets:
+            _build_preset_playlist(
+                preset['name'],
+                preset['include'],
+                exclude_keywords=preset.get('exclude', []),
+                min_duration_ms=int(preset.get('min_d', 120000)),
+                max_duration_ms=int(preset.get('max_d', 480000)),
+                min_rating=int(preset.get('min_r', 5)),
+                min_play_count=int(preset.get('min_p', 1)),
+                limit=int(preset.get('limit', 100)),
+                min_tracks=int(preset.get('min_t', 20)),
+                max_per_artist=int(preset.get('max_artist', 0)),
+                fallback_min_rating=int(preset.get('fallback_r', preset.get('min_r', 5))),
+                fallback_min_play_count=int(preset.get('fallback_p', 0)),
+            )
         
         return smart_playlists
 
@@ -884,21 +2123,32 @@ class PlexAmpAutoPlaylist:
         body = resp.read()
         return json.loads(body) if body else {}
 
-    def cleanup_old_auto_playlists(self):
-        """Supprime les anciennes playlists auto-générées (préfixe [Auto]) via l'API Plex."""
+    def cleanup_old_auto_playlists(self, new_playlist_names: Optional[List[str]] = None):
+        """Supprime uniquement les playlists Plex dont le nom (sans le compteur de titres) correspond
+        à une playlist qui va être régénérée."""
+        import re as _re
+        def _base(name: str) -> str:
+            return _re.sub(r'\s*\(\d+ titres\)$', '', name).strip()
+
         try:
             data = self._plex_api('GET', '/playlists')
             playlists = data.get('MediaContainer', {}).get('Metadata', [])
+            if new_playlist_names:
+                # Supprimer uniquement les playlists dont la base correspond à une playlist régénérée
+                new_bases = {_base(n) for n in new_playlist_names}
+                to_delete = [p for p in playlists if _base(p.get('title', '')) in new_bases]
+            else:
+                # Fallback: supprimer tout (comportement original, déconseillé si préfixe vide)
+                to_delete = [p for p in playlists if p.get('title', '').startswith(AUTO_PLAYLIST_PREFIX)] if AUTO_PLAYLIST_PREFIX else []
             count = 0
-            for p in playlists:
-                if p.get('title', '').startswith(AUTO_PLAYLIST_PREFIX):
-                    rk = p['ratingKey']
-                    try:
-                        self._plex_api('DELETE', f'/playlists/{rk}')
-                        count += 1
-                        self.logger.debug(f"  Supprimé: {p['title']}")
-                    except Exception as e:
-                        self.logger.warning(f"  ⚠️ Impossible de supprimer {p['title']}: {e}")
+            for p in to_delete:
+                rk = p['ratingKey']
+                try:
+                    self._plex_api('DELETE', f'/playlists/{rk}')
+                    count += 1
+                    self.logger.debug(f"  Supprimé: {p['title']}")
+                except Exception as e:
+                    self.logger.warning(f"  ⚠️ Impossible de supprimer {p['title']}: {e}")
             if count:
                 self.logger.info(f"🧹 {count} anciennes playlists auto supprimées")
         except Exception as e:
@@ -908,6 +2158,17 @@ class PlexAmpAutoPlaylist:
 
     def save_playlist_to_plex(self, playlist_name: str, tracks: List[Dict], append_existing: bool = False) -> bool:
         """Sauvegarde une playlist dans Plex via l'API HTTP."""
+        # Dédupliquer les pistes par ID (conserver l'ordre, première occurrence)
+        seen_ids: set = set()
+        deduped = []
+        for t in tracks:
+            tid = t['id']
+            if tid not in seen_ids:
+                seen_ids.add(tid)
+                deduped.append(t)
+        if len(deduped) < len(tracks):
+            self.logger.debug(f"  🔁 {len(tracks) - len(deduped)} doublons retirés de {playlist_name}")
+        tracks = deduped
         if not tracks:
             self.logger.debug(f"⏭️ Playlist vide ignorée: {playlist_name}")
             return False
@@ -1002,6 +2263,16 @@ class PlexAmpAutoPlaylist:
         (['🏆', 'top du mois'], '🏆', [(180, 130, 0), (255, 200, 0)], None),
         (['🔁', 'réévaluer'], '🔁', [(100, 100, 0), (200, 150, 0)], None),
         (['🧹', 'nettoyage'], '🧹', [(80, 80, 80), (150, 150, 150)], None),
+        (['daily mix 80s'], '🪩', [(255, 100, 50), (255, 200, 0)], None),
+        (['daily mix 90s'], '📼', [(40, 120, 255), (0, 220, 200)], None),
+        (['daily mix 2000s'], '💿', [(170, 80, 255), (80, 180, 255)], None),
+        (['daily mix 2010s'], '📱', [(20, 150, 160), (0, 220, 120)], None),
+        (['mix humeur happy'], '😊', [(255, 170, 0), (255, 90, 0)], None),
+        (['mix humeur sad'], '🥀', [(70, 90, 160), (20, 40, 100)], None),
+        (['mix humeur intense'], '🔥', [(200, 40, 0), (255, 120, 0)], None),
+        (['mix humeur sensuel'], '💋', [(180, 20, 80), (255, 80, 140)], None),
+        (['mix humeur deep focus'], '🧠', [(0, 90, 150), (0, 170, 220)], None),
+        (['mix humeur sleep'], '🌙', [(30, 50, 120), (60, 100, 180)], None),
         # Manual playlists (partial match on title)
         (['disco', '2007'], '🕺', [(220, 20, 180), (255, 140, 0)], None),
         (["90s", "'90s", "90"], '💿', [(0, 100, 200), (0, 200, 150)], None),
@@ -1027,6 +2298,44 @@ class PlexAmpAutoPlaylist:
         (['stars 80'], '⭐', [(180, 0, 220), (255, 100, 0)], None),
         (['génération top 50', 'generation top 50'], '🎤', [(0, 50, 150), (200, 50, 200)], None),
     ]
+
+    def _find_background_image(self, title: str) -> Optional[Path]:
+        """Cherche une image de fond dans poster_backgrounds/ correspondant au titre.
+
+        Les fichiers peuvent être nommés par mot-clé : ``rap.jpg``, ``jazz.png``,
+        ``90s_rap.jpg``, ``chill.webp``, etc.  Le fichier avec le meilleur score
+        de correspondance est retourné.  Retourne None si aucune image ne correspond.
+        """
+        bg_dir_raw = str(self.poster_style.get("backgrounds_dir", "")).strip()
+        if bg_dir_raw:
+            bg_dir = Path(bg_dir_raw).expanduser()
+        else:
+            bg_dir = Path(__file__).parent / "poster_backgrounds"
+
+        if not bg_dir.is_dir():
+            return None
+
+        title_lower = title.lower()
+        title_normalized = re.sub(r"['''\(\)\[\]&,!?]", " ", title_lower)
+        title_words = set(title_normalized.split())
+
+        EXTS = ('.jpg', '.jpeg', '.png', '.webp')
+        best: Optional[Path] = None
+        best_score = 0
+
+        for img_file in sorted(bg_dir.iterdir()):
+            if img_file.suffix.lower() not in EXTS:
+                continue
+            stem = img_file.stem.lower().replace('_', ' ').replace('-', ' ')
+            stem_words = set(stem.split())
+            score = len(stem_words & title_words)
+            if stem in title_lower:
+                score += len(stem_words)
+            if score > best_score:
+                best_score = score
+                best = img_file
+
+        return best if best_score > 0 else None
 
     def _find_poster_theme(self, title: str) -> Tuple[str, list, list]:
         """Trouve le thème visuel pour un titre de playlist. Retourne (emoji, [c1], [c2])."""
@@ -1105,15 +2414,25 @@ class PlexAmpAutoPlaylist:
 
             emoji, c1, c2 = self._find_poster_theme(title)
 
-            # Créer l'image
-            img = Image.new('RGB', (SIZE, SIZE))
-            for y in range(SIZE):
-                for x in range(SIZE):
-                    t = (x + y) / (2 * SIZE)
-                    r = int(c1[0] + (c2[0] - c1[0]) * t)
-                    g = int(c1[1] + (c2[1] - c1[1]) * t)
-                    b = int(c1[2] + (c2[2] - c1[2]) * t)
-                    img.putpixel((x, y), (r, g, b))
+            # Fond : image custom ou dégradé de fallback
+            bg_path = self._find_background_image(title)
+            if bg_path:
+                try:
+                    img = Image.open(bg_path).convert('RGB').resize((SIZE, SIZE), Image.LANCZOS)
+                    self.logger.debug(f"  🖼️ Fond: {bg_path.name}")
+                except Exception:
+                    bg_path = None  # fallback dégradé
+
+            if not bg_path:
+                # Créer l'image avec dégradé diagonal
+                img = Image.new('RGB', (SIZE, SIZE))
+                for y in range(SIZE):
+                    for x in range(SIZE):
+                        t = (x + y) / (2 * SIZE)
+                        r = int(c1[0] + (c2[0] - c1[0]) * t)
+                        g = int(c1[1] + (c2[1] - c1[1]) * t)
+                        b = int(c1[2] + (c2[2] - c1[2]) * t)
+                        img.putpixel((x, y), (r, g, b))
 
             # Overlay sombre
             overlay = Image.new('RGBA', (SIZE, SIZE), (0, 0, 0, OVERLAY_ALPHA))
@@ -1197,6 +2516,85 @@ class PlexAmpAutoPlaylist:
 
         self.logger.info(f"🖼️ Posters: {ok} appliqués, {fail} échoués sur {len(playlists)}")
 
+    def report_missing_year(
+        self,
+        tracks: Optional[List[Dict]] = None,
+        output_file: Optional[str] = None,
+    ) -> List[Dict]:
+        """Génère un mini rapport des pistes sans tag année.
+
+        Utile pour identifier les fichiers dont les métadonnées sont à corriger
+        à la source (MusicBrainz Picard, beets, etc.).
+
+        Args:
+            tracks: Liste de pistes déjà chargée ; si None, charge depuis la DB.
+            output_file: Chemin d'un fichier CSV de sortie (optionnel).
+
+        Returns:
+            Liste des pistes sans année.
+        """
+        import csv as _csv
+
+        if tracks is None:
+            tracks = self.get_track_data()
+
+        missing = [t for t in tracks if not (t.get('year') or 0)]
+        total = len(tracks)
+        pct = round(100 * len(missing) / max(1, total), 1)
+
+        sep = "=" * 60
+        self.logger.info(f"\n📅 RAPPORT TAGS ANNÉE MANQUANTS")
+        self.logger.info(sep)
+        self.logger.info(f"  Total pistes   : {total}")
+        self.logger.info(f"  Sans année     : {len(missing)} ({pct} %)")
+        self.logger.info(f"  Avec année     : {total - len(missing)}")
+
+        if not missing:
+            self.logger.info("  ✅ Toutes les pistes ont un tag année !")
+            return []
+
+        # Regroupement par artiste
+        by_artist: Dict[str, List[Dict]] = {}
+        for t in missing:
+            artist = (t.get('artist') or 'Unknown Artist').strip()
+            by_artist.setdefault(artist, []).append(t)
+
+        top_n = sorted(by_artist.items(), key=lambda x: -len(x[1]))[:20]
+        self.logger.info(f"\n  Top artistes avec le plus de pistes sans année :")
+        for artist, atracks in top_n:
+            sample_albums = {(t.get('album') or '?') for t in atracks}
+            albums_str = ', '.join(sorted(sample_albums)[:3])
+            if len(sample_albums) > 3:
+                albums_str += f' … (+{len(sample_albums) - 3})'
+            self.logger.info(f"    {artist:40s} {len(atracks):4d} piste(s)  [{albums_str}]")
+
+        # Regroupement par album (top 10)
+        by_album: Dict[str, List[Dict]] = {}
+        for t in missing:
+            key = f"{(t.get('artist') or '?').strip()} — {(t.get('album') or '?').strip()}"
+            by_album.setdefault(key, []).append(t)
+        top_albums = sorted(by_album.items(), key=lambda x: -len(x[1]))[:10]
+        self.logger.info(f"\n  Top albums/artistes à corriger :")
+        for key, atracks in top_albums:
+            self.logger.info(f"    {key[:70]:70s}  {len(atracks):3d} piste(s)")
+
+        # Export CSV
+        if output_file:
+            out_path = Path(output_file)
+            fieldnames = ['id', 'title', 'artist', 'album', 'genre', 'play_count', 'rating', 'file_path']
+            try:
+                with open(out_path, 'w', newline='', encoding='utf-8') as f:
+                    writer = _csv.DictWriter(f, fieldnames=fieldnames, extrasaction='ignore')
+                    writer.writeheader()
+                    for t in missing:
+                        writer.writerow({k: t.get(k, '') for k in fieldnames})
+                self.logger.info(f"\n  📁 Export CSV : {out_path} ({len(missing)} lignes)")
+            except Exception as e:
+                self.logger.error(f"  ❌ Export CSV échoué : {e}")
+
+        self.logger.info(sep)
+        return missing
+
     def generate_all_playlists(self, save_to_plex: bool = True,
                                append_existing: bool = False,
                                custom_config: Optional[str] = None) -> Dict[str, int]:
@@ -1209,12 +2607,12 @@ class PlexAmpAutoPlaylist:
             self.logger.error("❌ Aucune piste trouvée")
             return {}
         
-        # Nettoyer les anciennes playlists auto avant de recréer (pas en mode ajout)
-        if save_to_plex and not append_existing:
-            self.cleanup_old_auto_playlists()
-
         # Générer toutes les playlists
         all_playlists = self._build_all_playlists(tracks, custom_config=custom_config)
+
+        # Nettoyer uniquement les playlists qui vont être régénérées (pas en mode ajout)
+        if save_to_plex and not append_existing:
+            self.cleanup_old_auto_playlists(new_playlist_names=list(all_playlists.keys()))
         self._last_tracks = tracks
         self._last_playlists = all_playlists
 
@@ -1266,6 +2664,9 @@ def main():
                        help="Ne pas générer les images de poster")
     parser.add_argument("--posters-only", action="store_true",
                        help="Regénérer uniquement les posters (sans toucher aux playlists)")
+    parser.add_argument("--poster-style-config",
+                       default="",
+                       help="Chemin vers un JSON de style posters (équivaut à PLEX_POSTER_STYLE_CONFIG)")
     parser.add_argument("--usb", nargs='?', const='/media/paulceline/MUSIC',
                        help="Exporter Stars 80 et Top 50 vers clé USB (défaut: /media/paulceline/MUSIC)")
     parser.add_argument("--usb-playlists", nargs='+', default=['Stars 80', 'Top 50'],
@@ -1275,11 +2676,24 @@ def main():
     parser.add_argument("--custom-config",
                        default=os.getenv("PLEX_CUSTOM_PLAYLISTS_CONFIG", ""),
                        help="Chemin vers un fichier JSON de playlists personnalisées")
+    parser.add_argument("--report-missing-year", nargs='?', const='-', metavar='CSV_FILE',
+                       help="Affiche un rapport des pistes sans tag année. "
+                            "Fournir un chemin pour exporter en CSV (ex. --report-missing-year rapport.csv). "
+                            "Sortie console seule si omis.")
     
     args = parser.parse_args()
     
+    if args.poster_style_config:
+        os.environ["PLEX_POSTER_STYLE_CONFIG"] = args.poster_style_config
+
     generator = PlexAmpAutoPlaylist(args.plex_db, verbose=args.verbose)
     generator._no_posters = args.no_posters
+
+    # Mode rapport tags année manquants (exclusif)
+    if args.report_missing_year is not None:
+        csv_out = None if args.report_missing_year == '-' else args.report_missing_year
+        generator.report_missing_year(output_file=csv_out)
+        return
 
     # Mode posters uniquement
     if args.posters_only:

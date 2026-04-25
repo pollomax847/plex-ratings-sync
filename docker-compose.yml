@@ -28,6 +28,8 @@ services:
       PLEX_URL: ${PLEX_URL:-http://host.docker.internal:32400}
       PLEX_TOKEN: ${PLEX_TOKEN:-}
       PLEX_POSTER_STYLE_CONFIG: ${PLEX_POSTER_STYLE_CONFIG:-/app/playlists/poster_style.default.json}
+      SLSKD_URL: ${SLSKD_URL:-http://host.docker.internal:5032}
+      SLSKD_API_KEY: ${SLSKD_API_KEY:-}
     volumes:
       - "${PLEX_CONFIG_HOST:-/var/snap/plexmediaserver/common/Library/Application Support/Plex Media Server}:/plex:ro"
       - "${MUSIC_HOST:-/home/paulceline/Musiques}:/music"
@@ -69,6 +71,8 @@ services:
       WEBUI_ALLOW_DOCKER_CONTROL: ${WEBUI_ALLOW_DOCKER_CONTROL:-0}
       ITUNES_XML: /itunes/iTunes Music Library.xml
       COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-scripts}
+      SLSKD_URL: ${SLSKD_URL:-http://host.docker.internal:5032}
+      SLSKD_API_KEY: ${SLSKD_API_KEY:-}
     volumes:
       - "${PLEX_CONFIG_HOST:-/var/snap/plexmediaserver/common/Library/Application Support/Plex Media Server}:/plex:ro"
       - "${MUSIC_HOST:-/home/paulceline/Musiques}:/music"
@@ -131,6 +135,8 @@ services:
       PLEX_URL: ${PLEX_URL:-http://host.docker.internal:32400}
       PLEX_TOKEN: ${PLEX_TOKEN:-}
       PLEX_POSTER_STYLE_CONFIG: ${PLEX_POSTER_STYLE_CONFIG:-/app/playlists/poster_style.default.json}
+      SLSKD_URL: ${SLSKD_URL:-http://host.docker.internal:5032}
+      SLSKD_API_KEY: ${SLSKD_API_KEY:-}
     volumes:
       - "${PLEX_CONFIG_HOST:-/var/snap/plexmediaserver/common/Library/Application Support/Plex Media Server}:/plex:ro"
       - "${MUSIC_HOST:-/home/paulceline/Musiques}:/music"

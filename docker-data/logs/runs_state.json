@@ -1,7 +1,200 @@
 {
   "version": 1,
-  "saved_at": 1777025338.1392193,
+  "saved_at": 1777119178.3411396,
   "runs": [
+    {
+      "run_id": "1777119178-34e237",
+      "job_key": "daily",
+      "cmd": [
+        "bash",
+        "workflows/plex_daily_workflow.sh"
+      ],
+      "started_at": 1777119178.283557,
+      "ended_at": 1777119178.341126,
+      "exit_code": 1,
+      "log_path": "/data/logs/1777119178-34e237-daily.log"
+    },
+    {
+      "run_id": "1777113554-ca51ec",
+      "job_key": "playlist-import-spotify",
+      "cmd": [
+        "python3",
+        "playlists/import_itunes_playlists_to_plex.py",
+        "--source-dir",
+        "/playlists",
+        "--plex-db",
+        "/plex/Plug-in Support/Databases/com.plexapp.plugins.library.db",
+        "--plex-url",
+        "http://host.docker.internal:32400",
+        "--plex-token",
+        "WQQySxr3SBPY-Sn77Yuk",
+        "--map-by-basename",
+        "--apply",
+        "--entries-base-dir",
+        "/music",
+        "--cleanup-plex-similar",
+        "--cleanup-plex-duplicates"
+      ],
+      "started_at": 1777113554.2658267,
+      "ended_at": 1777113554.7586489,
+      "exit_code": 0,
+      "log_path": "/data/logs/1777113554-ca51ec-playlist-import-spotify.log"
+    },
+    {
+      "run_id": "1777104179-f9f33f",
+      "job_key": "playlists_posters_only",
+      "cmd": [
+        "python3",
+        "playlists/auto_playlists_plexamp.py",
+        "--verbose",
+        "--posters-only",
+        "--plex-db",
+        "/plex/Plug-in Support/Databases/com.plexapp.plugins.library.db"
+      ],
+      "started_at": 1777104179.7222986,
+      "ended_at": 1777104211.0487933,
+      "exit_code": 0,
+      "log_path": "/data/logs/1777104179-f9f33f-playlists_posters_only.log"
+    },
+    {
+      "run_id": "1777103808-a2d55d",
+      "job_key": "playlists_auto_custom",
+      "cmd": [
+        "python3",
+        "playlists/auto_playlists_plexamp.py",
+        "--verbose",
+        "--plex-db",
+        "/plex/Plug-in Support/Databases/com.plexapp.plugins.library.db",
+        "--custom-config",
+        "/app/playlists/custom_auto_playlists.json",
+        "--dry-run"
+      ],
+      "started_at": 1777103808.0908113,
+      "ended_at": 1777103829.9504185,
+      "exit_code": 0,
+      "log_path": "/data/logs/1777103808-a2d55d-playlists_auto_custom.log"
+    },
+    {
+      "run_id": "1777102475-41fb55",
+      "job_key": "playlists_posters_only",
+      "cmd": [
+        "python3",
+        "playlists/auto_playlists_plexamp.py",
+        "--verbose",
+        "--posters-only",
+        "--plex-db",
+        "/plex/Plug-in Support/Databases/com.plexapp.plugins.library.db"
+      ],
+      "started_at": 1777102475.278903,
+      "ended_at": 1777102485.0663292,
+      "exit_code": 0,
+      "log_path": "/data/logs/1777102475-41fb55-playlists_posters_only.log"
+    },
+    {
+      "run_id": "1777099810-9b9de2",
+      "job_key": "playlists_posters_only",
+      "cmd": [
+        "python3",
+        "playlists/auto_playlists_plexamp.py",
+        "--verbose",
+        "--posters-only",
+        "--plex-db",
+        "/plex/Plug-in Support/Databases/com.plexapp.plugins.library.db",
+        "--poster-style-config",
+        "/app/playlists/poster_style.neon_retro.json"
+      ],
+      "started_at": 1777099810.2714171,
+      "ended_at": 1777099810.968533,
+      "exit_code": 2,
+      "log_path": "/data/logs/1777099810-9b9de2-playlists_posters_only.log"
+    },
+    {
+      "run_id": "1777063686-e8c92e",
+      "job_key": "playlists_auto_custom",
+      "cmd": [
+        "python3",
+        "playlists/auto_playlists_plexamp.py",
+        "--verbose",
+        "--plex-db",
+        "/plex/Plug-in Support/Databases/com.plexapp.plugins.library.db",
+        "--dry-run"
+      ],
+      "started_at": 1777063686.9754093,
+      "ended_at": 1777063707.642963,
+      "exit_code": 0,
+      "log_path": "/data/logs/1777063686-e8c92e-playlists_auto_custom.log"
+    },
+    {
+      "run_id": "1777063656-4e42da",
+      "job_key": "playlists_auto_custom",
+      "cmd": [
+        "python3",
+        "playlists/auto_playlists_plexamp.py",
+        "--verbose",
+        "--plex-db",
+        "/plex/Plug-in Support/Databases/com.plexapp.plugins.library.db",
+        "--dry-run"
+      ],
+      "started_at": 1777063656.5342422,
+      "ended_at": 1777063679.7141304,
+      "exit_code": 0,
+      "log_path": "/data/logs/1777063656-4e42da-playlists_auto_custom.log"
+    },
+    {
+      "run_id": "1777056277-8e2d2d",
+      "job_key": "playlists_auto_custom",
+      "cmd": [
+        "python3",
+        "playlists/auto_playlists_plexamp.py",
+        "--verbose",
+        "--plex-db",
+        "/plex/Plug-in Support/Databases/com.plexapp.plugins.library.db",
+        "--dry-run"
+      ],
+      "started_at": 1777056277.574145,
+      "ended_at": 1777056289.464588,
+      "exit_code": 0,
+      "log_path": "/data/logs/1777056277-8e2d2d-playlists_auto_custom.log"
+    },
+    {
+      "run_id": "1777055936-bcf0f1",
+      "job_key": "playlists_auto_custom",
+      "cmd": [
+        "python3",
+        "playlists/auto_playlists_plexamp.py",
+        "--verbose",
+        "--plex-db",
+        "/plex/Plug-in Support/Databases/com.plexapp.plugins.library.db",
+        "--dry-run"
+      ],
+      "started_at": 1777055936.2755206,
+      "ended_at": 1777055948.2059386,
+      "exit_code": 0,
+      "log_path": "/data/logs/1777055936-bcf0f1-playlists_auto_custom.log"
+    },
+    {
+      "run_id": "1777032007-70eebb",
+      "job_key": "playlist-import-spotify",
+      "cmd": [
+        "python3",
+        "playlists/import_itunes_playlists_to_plex.py",
+        "--source-dir",
+        "/playlists",
+        "--plex-db",
+        "/plex/Plug-in Support/Databases/com.plexapp.plugins.library.db",
+        "--plex-url",
+        "http://host.docker.internal:32400",
+        "--plex-token",
+        "WQQySxr3SBPY-Sn77Yuk",
+        "--apply",
+        "--cleanup-plex-similar",
+        "--cleanup-plex-duplicates"
+      ],
+      "started_at": 1777032007.6354327,
+      "ended_at": 1777032009.1596336,
+      "exit_code": 1,
+      "log_path": "/data/logs/1777032007-70eebb-playlist-import-spotify.log"
+    },
     {
       "run_id": "1777025319-d8e37b",
       "job_key": "ratings_2star_songrec_only",

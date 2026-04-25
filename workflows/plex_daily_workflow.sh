@@ -7,7 +7,7 @@
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BASE_DIR="$(dirname "$SCRIPT_DIR")"
-AUDIO_LIBRARY="/home/paulceline/Musiques"
+AUDIO_LIBRARY="${AUDIO_LIBRARY:-/home/paulceline/Musiques}"
 LOG_DIR="$HOME/.plex/logs/plex_daily"
 SONGREC_QUEUE_DIR="$HOME/songrec_queue"
 

@@ -9,45 +9,64 @@
 </head>
 <body>
 {% set ep = request.endpoint or '' %}
-<header>
-  <a class="brand" href="{{ url_for('index') }}">
-    <span class="brand-mark">PX</span>
-    <span>
-      Plex Scripts
-      <small>dashboard</small>
-    </span>
-  </a>
-  <nav>
-    <a class="{% if ep == 'index' %}active{% endif %}" href="{{ url_for('index') }}">Accueil</a>
-    <a class="{% if ep in ['jobs_page', 'job_page'] %}active{% endif %}" href="{{ url_for('jobs_page') }}">Runs</a>
-    <a class="{% if ep == 'playlists_page' %}active{% endif %}" href="{{ url_for('playlists_page') }}">Playlists</a>
-    <a class="{% if ep == 'config_page' %}active{% endif %}" href="{{ url_for('config_page') }}">Config</a>
-    <a class="{% if ep in ['logs_page', 'log_view_page'] %}active{% endif %}" href="{{ url_for('logs_page') }}">Logs</a>
-  </nav>
-</header>
-<section class="runtime-strip">
-  <div class="runtime-item">
-    <span class="runtime-label">Mode</span>
-    <strong>{{ 'Docker' if docker_mode else 'Host' }}</strong>
-  </div>
-  <div class="runtime-item">
-    <span class="runtime-label">Detector</span>
-    <strong class="{% if pld_available %}ok{% else %}err{% endif %}">
-      {% if pld_available %}Operational{% else %}Unavailable{% endif %}
-    </strong>
-  </div>
-  <div class="runtime-item runtime-item-grow">
-    <span class="runtime-label">Racine projet</span>
-    <strong>{{ project_root }}</strong>
-  </div>
-</section>
-<main>{% block content %}{% endblock %}</main>
-<footer>
-  <small>
-    {{ project_root }} ·
-    {% if docker_mode %}Docker{% else %}Host{% endif %} ·
-    {% if pld_available %}detector ✓{% else %}detector ✗ ({{ pld_err }}){% endif %}
-  </small>
-</footer>
+<div class="page-frame">
+  <header class="site-header">
+    <div class="site-header-row">
+      <a class="brand" href="{{ url_for('index') }}">
+        <span class="brand-mark">PX</span>
+        <span>
+          Plex Scripts
+          <small>console simplifiee</small>
+        </span>
+      </a>
+      <nav class="top-nav" aria-label="Navigation principale">
+        <a class="{% if ep == 'index' %}active{% endif %}" href="{{ url_for('index') }}">Accueil</a>
+        <a class="{% if ep in ['jobs_page', 'job_page'] %}active{% endif %}" href="{{ url_for('jobs_page') }}">Runs</a>
+        <a class="{% if ep == 'playlists_page' %}active{% endif %}" href="{{ url_for('playlists_page') }}">Playlists</a>
+        <a class="{% if ep == 'config_page' %}active{% endif %}" href="{{ url_for('config_page') }}">Config</a>
+        <a class="{% if ep in ['logs_page', 'log_view_page'] %}active{% endif %}" href="{{ url_for('logs_page') }}">Logs</a>
+      </nav>
+    </div>
+    <div class="context-bar">
+      <span class="context-pill">
+        <span class="runtime-label">Mode</span>
+        <strong>{{ 'Docker' if docker_mode else 'Host' }}</strong>
+      </span>
+      <span class="context-pill">
+        <span class="runtime-label">Detector</span>
+        <strong class="{% if pld_available %}ok{% else %}err{% endif %}">{% if pld_available %}OK{% else %}Off{% endif %}</strong>
+      </span>
+      <details class="context-drawer">
+        <summary>Systeme</summary>
+        <div class="context-drawer-grid">
+          <div class="runtime-item">
+            <span class="runtime-label">Racine projet</span>
+            <strong>{{ project_root }}</strong>
+          </div>
+          <div class="runtime-item">
+            <span class="runtime-label">Plex detector</span>
+            <strong class="{% if pld_available %}ok{% else %}err{% endif %}">
+              {% if pld_available %}Operational{% else %}Unavailable{% endif %}
+            </strong>
+          </div>
+          {% if not pld_available and pld_err %}
+          <div class="runtime-item runtime-item-grow">
+            <span class="runtime-label">Erreur</span>
+            <strong>{{ pld_err }}</strong>
+          </div>
+          {% endif %}
+        </div>
+      </details>
+    </div>
+  </header>
+  <main>{% block content %}{% endblock %}</main>
+  <footer>
+    <small>
+      {{ project_root }} ·
+      {% if docker_mode %}Docker{% else %}Host{% endif %} ·
+      {% if pld_available %}detector ✓{% else %}detector ✗{% endif %}
+    </small>
+  </footer>
+</div>
 </body>
 </html>

@@ -14,7 +14,7 @@ CONFIG_FILE="$HOME/.plex_ratings_sync.conf"
 LOG_DIR="$HOME/.plex/logs/plex_ratings"
 
 # Bibliothèques audio à vérifier (séparées par des espaces)
-AUDIO_LIBRARIES="/home/paulceline/Musiques"
+AUDIO_LIBRARIES="${AUDIO_LIBRARY:-/home/paulceline/Musiques}"
 
 # Couleurs pour les logs
 RED='\033[0;31m'

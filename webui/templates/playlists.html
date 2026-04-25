@@ -8,6 +8,18 @@
     <p class="muted">Inspection M3U/PLS, matching audio, comparaison de versions et audit Plex depuis une seule page.</p>
   </div>
 </section>
+{% if delete_status.deleted %}
+<section class="notice notice-info">
+  <strong>Suppression OK</strong>
+  <span>{{ delete_status.deleted }}</span>
+</section>
+{% endif %}
+{% if delete_status.error %}
+<section class="notice notice-warn">
+  <strong>Échec suppression</strong>
+  <span>{{ delete_status.error }}</span>
+</section>
+{% endif %}
 {% if not pld_available %}<p class="err">Module detector indisponible : {{ pld_err }}</p>{% endif %}
 
 <section class="notice notice-info">
@@ -29,9 +41,10 @@
 </section>
 
 <div class="tabs">
-  <button data-tab="plex" onclick="tab('plex')" class="tab-btn active">1. Plex</button>
-  <button data-tab="import" onclick="tab('import')" class="tab-btn">2. Import</button>
-  <button data-tab="diagnostics" onclick="tab('diagnostics')" class="tab-btn">3. Diagnostic</button>
+  <button data-tab="plex" onclick="tab('plex')" class="tab-btn active">Plex</button>
+  <button data-tab="import" onclick="tab('import')" class="tab-btn">Import</button>
+  <button data-tab="diagnostics" onclick="tab('diagnostics')" class="tab-btn">Diagnostic</button>
+  <button data-tab="auto" onclick="tab('auto')" class="tab-btn">Auto ✨</button>
 </div>
 
 <section id="tab-plex" class="tab-pane">
@@ -41,58 +54,56 @@
     <span>Les opérations Plex de cette page utilisent l'API. La lecture directe de <code>Preferences.xml</code> dépend encore des permissions du fichier monté.</span>
   </div>
   {% endif %}
-  <div class="plex-shell">
-    <section class="surface section-block plex-primary-card">
-      <div class="section-head">
-        <h2>Connexion Plex</h2>
-        <span class="section-meta">Détecter, lister, supprimer</span>
+  <section class="surface section-block">
+    <div class="section-head">
+      <h2>Connexion Plex</h2>
+      <span class="section-meta">Détecter, lister, supprimer</span>
+    </div>
+    <p class="muted">Le flux principal reste sur une seule colonne: connexion, listing, puis actions utiles en dessous.</p>
+    <div class="form-grid two-col compact-gap top-gap">
+      <div class="field-block span-2">
+        <label for="p-url">URL</label>
+        <input id="p-url" value="{{ defaults.plex_url }}">
       </div>
-      <p class="muted">Utilise <strong>Détecter auto</strong>, puis <strong>Lister</strong> pour afficher tes playlists. Tu peux supprimer depuis chaque carte.</p>
-      <div class="form-grid two-col compact-gap top-gap">
-        <div class="field-block span-2">
-          <label for="p-url">URL</label>
-          <input id="p-url" value="{{ defaults.plex_url }}">
-        </div>
-        <div class="field-block span-2">
-          <label for="p-token">Token</label>
-          <div class="inline-actions">
-            <input id="p-token" type="password" value="{{ defaults.plex_token }}">
-            <button class="btn" onclick="detectToken()">🔍 Détecter auto</button>
-          </div>
+      <div class="field-block span-2">
+        <label for="p-token">Token</label>
+        <div class="inline-actions">
+          <input id="p-token" type="password" value="{{ defaults.plex_token }}">
+          <button class="btn" onclick="detectToken()">Détecter auto</button>
         </div>
       </div>
-      <div class="inline-actions top-gap">
-        <label class="inline-check"><input type="checkbox" id="p-smart" checked> Inclure smart playlists</label>
-        <button class="btn" onclick="doPlex()">📡 Lister</button>
-      </div>
-      <div id="p-detect-info" class="muted tiny-gap"></div>
-    </section>
+    </div>
+    <div class="inline-actions top-gap">
+      <label class="inline-check"><input type="checkbox" id="p-smart" checked> Inclure smart playlists</label>
+      <button class="btn" onclick="doPlex()">Lister</button>
+    </div>
+    <div id="p-detect-info" class="muted tiny-gap"></div>
 
-    <aside class="plex-side-stack">
-      <section class="surface section-block quick-action-card danger-accent">
+    <div class="playlist-utility-grid stack">
+      <section class="surface utility-card utility-card-danger">
         <div class="section-head">
-          <h2>Suppression rapide</h2>
-          <span class="section-meta">Par nom exact</span>
+          <h3>Suppression rapide</h3>
+          <span class="section-meta">Nom exact</span>
         </div>
         <div class="field-block">
-          <label for="p-delete-name">Nom de la playlist à supprimer</label>
+          <label for="p-delete-name">Playlist à supprimer</label>
           <input id="p-delete-name" placeholder="Nom exact dans Plex">
         </div>
         <div class="inline-actions top-gap">
-          <button class="btn danger" onclick="deletePlaylistByName()">🗑 Supprimer</button>
+          <button class="btn danger" onclick="deletePlaylistByName()">Supprimer</button>
         </div>
         <div id="p-action-out" class="muted tiny-gap"></div>
       </section>
 
-      <section class="surface section-block quick-tip-card">
-        <div class="section-head">
-          <h2>Repères</h2>
-          <span class="section-meta">Utilisation rapide</span>
-        </div>
-        <div class="result-list compact-result-list">
+      <details class="surface utility-card utility-card-help">
+        <summary>
+          <span>Aide rapide</span>
+          <span class="section-meta">3 étapes</span>
+        </summary>
+        <div class="result-list compact-result-list top-gap">
           <article class="result-list-item">
             <strong>1. Détection</strong>
-            <span class="table-subline">Préremplit l’URL et le token Plex quand c’est possible.</span>
+            <span class="table-subline">Préremplit l'URL et le token quand c'est possible.</span>
           </article>
           <article class="result-list-item">
             <strong>2. Listing</strong>
@@ -100,12 +111,12 @@
           </article>
           <article class="result-list-item">
             <strong>3. Action</strong>
-            <span class="table-subline">Supprime depuis une carte ou par nom exact dans le panneau latéral.</span>
+            <span class="table-subline">Supprime depuis une carte ou par nom exact.</span>
           </article>
         </div>
-      </section>
-    </aside>
-  </div>
+      </details>
+    </div>
+  </section>
   <div class="docker-log-toolbar" id="plex-toolbar">
     <label>Recherche
       <input id="plex-q" type="text" placeholder="Filtrer par titre/type" oninput="renderPlexList()">
@@ -121,7 +132,11 @@
     <button class="btn ghost" onclick="exportPlex('json')">Export JSON</button>
     <button class="btn ghost" onclick="exportPlex('csv')">Export CSV</button>
   </div>
-  <div id="p-out" class="plex-results stack"></div>
+  <div id="p-out" class="plex-results stack">
+    <section class="surface result-panel">
+      <p class="muted">Utilise <strong>Détecter auto</strong> ou saisis l'URL/token, puis clique sur <strong>Lister</strong>.</p>
+    </section>
+  </div>
   <div id="p-tracks-out" class="stack plex-results"></div>
 </section>
 
@@ -173,6 +188,10 @@ Billie Jean,Michael Jackson,Thriller</pre>
           <option value="apple_music">🍎 Apple Music</option>
           <option value="tidal">🔷 Tidal</option>
         </select>
+      </div>
+      <div class="field-block span-2">
+        <label for="p-import-url">Lien playlist brut <em class="muted">(optionnel — ex: Spotify)</em></label>
+        <input id="p-import-url" type="url" placeholder="https://open.spotify.com/playlist/...">
       </div>
       <div class="field-block">
         <label for="p-mode">Mode d'import</label>
@@ -288,10 +307,137 @@ Billie Jean,Michael Jackson,Thriller</pre>
   </section>
 </section>
 
+<section id="tab-auto" class="tab-pane hidden">
+
+  <section class="surface section-block">
+    <div class="section-head">
+      <div>
+        <h2>✨ Créer des playlists automatiques</h2>
+        <p class="muted">Définit des règles (mots-clés, genres, note…) — sauvegarde — génère directement dans Plex.</p>
+      </div>
+    </div>
+    <p class="muted" style="font-size:12px">
+      Fichier de config : <code id="auto-config-path">—</code>
+    </p>
+  </section>
+
+  <div id="auto-rules-list" class="stack">
+    <p class="muted">⏳ Chargement des règles...</p>
+  </div>
+
+  <div class="inline-actions stack">
+    <button class="btn ghost" onclick="addAutoRule()">+ Ajouter une règle</button>
+  </div>
+
+  <section class="surface section-block stack">
+    <div class="section-head">
+      <h2>Sauvegarder &amp; Générer</h2>
+    </div>
+    <p class="muted">
+      Sauvegarde d'abord les règles dans le fichier JSON, puis génère les playlists dans Plex.
+      Le bouton <strong>Simulation</strong> liste les pistes sans rien créer.
+    </p>
+    <div class="inline-actions top-gap">
+      <button id="auto-save-btn" class="btn" onclick="saveAutoRules()">💾 Sauvegarder</button>
+      <button id="auto-gen-btn" class="btn" onclick="generateAutoPlaylists(false)">🎶 Générer dans Plex</button>
+      <button id="auto-dry-btn" class="btn ghost" onclick="generateAutoPlaylists(true)">🔍 Simulation</button>
+    </div>
+    <div id="auto-save-out" class="muted tiny-gap" style="margin-top:8px"></div>
+  </section>
+
+  <section class="surface section-block stack">
+    <div class="section-head">
+      <h2>Posters des playlists</h2>
+    </div>
+    <p class="muted">
+      Régénère les posters sans recréer les playlists. Tu peux forcer un style JSON si besoin.
+    </p>
+    <div class="inline-actions top-gap">
+      <label>
+        Style
+        <select id="auto-poster-style" onchange="posterPreviewRefresh()">
+          <option value="">Actuel (env / défaut)</option>
+          {% for style in defaults.poster_styles %}
+          <option value="{{ style.path }}" {% if defaults.poster_style == style.path %}selected{% endif %}>{{ style.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <button id="auto-posters-btn" class="btn ghost" onclick="generatePostersOnly()">🖼 Régénérer les posters</button>
+    </div>
+    <div id="auto-posters-out" class="muted tiny-gap" style="margin-top:8px"></div>
+
+    <hr style="margin:16px 0;border-color:var(--border,#333)">
+    <div class="section-head">
+      <h3 style="font-size:1rem;margin:0">Prévisualiser un poster</h3>
+      <span class="section-meta">Génération instantanée, sans toucher à Plex</span>
+    </div>
+    <div class="form-grid two-col compact-gap top-gap" style="align-items:flex-end">
+      <div class="field-block">
+        <label for="poster-preview-name">Nom de la playlist</label>
+        <input id="poster-preview-name" placeholder="Ma Playlist" oninput="posterPreviewDebounce()" value="">
+      </div>
+      <div class="field-block">
+        <label for="poster-preview-count">Nb de titres (optionnel)</label>
+        <input id="poster-preview-count" type="number" min="0" placeholder="42" oninput="posterPreviewDebounce()" style="width:120px">
+      </div>
+    </div>
+    <div class="inline-actions top-gap">
+      <button class="btn ghost" onclick="posterPreviewRefresh()">🔍 Prévisualiser</button>
+    </div>
+    <div id="poster-preview-area" style="margin-top:14px;display:none;text-align:center">
+      <img id="poster-preview-img" src="" alt="Prévisualisation poster"
+           style="max-width:300px;width:100%;border-radius:8px;box-shadow:0 4px 18px rgba(0,0,0,.5)">
+      <p id="poster-preview-err" class="err" style="display:none"></p>
+    </div>
+  </section>
+
+  <section class="surface section-block stack">
+    <div class="section-head">
+      <h2>Importer selon ton choix</h2>
+      <span class="section-meta">Cases à cocher</span>
+    </div>
+    <p class="muted">
+      Prévisualise la banque auto, coche les playlists souhaitées, puis importe uniquement la sélection dans Plex.
+    </p>
+    <div class="inline-actions top-gap">
+      <button class="btn ghost" onclick="previewAutoBank()">🧠 Prévisualiser</button>
+      <button class="btn ghost" onclick="setAllAutoBankChecks(true)">✅ Tout cocher</button>
+      <button class="btn ghost" onclick="setAllAutoBankChecks(false)">❎ Tout décocher</button>
+      <button class="btn" onclick="applySelectedAutoBank()">📥 Importer la sélection</button>
+      <label class="inline-check"><input type="checkbox" id="auto-append-existing"> Ajouter aux playlists existantes</label>
+      <label class="inline-check"><input type="checkbox" id="auto-replace-existing-all"> Ecraser tout (supprimer puis recreer)</label>
+    </div>
+    <div id="auto-bank-out" class="stack">
+      <section class="surface result-panel">
+        <p class="muted">Clique sur <strong>Prévisualiser</strong> pour charger la banque de playlists auto avant de cocher et importer.</p>
+      </section>
+    </div>
+  </section>
+
+  <section class="surface section-block stack">
+    <div class="section-head">
+      <h2>Validation utilisateur</h2>
+      <span class="section-meta">Contrôle et suppression des playlists créées</span>
+    </div>
+    <p class="muted">
+      Après génération, l'utilisateur valide les playlists auto puis supprime celles non souhaitées.
+    </p>
+    <div class="inline-actions top-gap">
+      <button class="btn ghost" onclick="refreshAutoCreatedPlaylists()">🔄 Rafraîchir la liste</button>
+      <label class="inline-check"><input type="checkbox" id="auto-show-all" onchange="refreshAutoCreatedPlaylists()"> Afficher toutes les playlists</label>
+    </div>
+    <div id="auto-created-out" class="stack"></div>
+  </section>
+
+  <div id="auto-gen-out" class="stack"></div>
+
+</section>
+
 <script id="playlists-defaults" type="application/json">{{ defaults | tojson }}</script>
 <script>
 const PLAYLIST_STORAGE_KEY = 'plex-playlists-ui-state-v1';
-const STATE_INPUT_IDS = ['scan-path','scan-recursive','an-path','m-path','m-library','m-tags','p-url','p-smart','p-delete-name','p-source','p-destination','p-mode','p-import-name','s-path','s-library'];
+const AUTO_BANK_SELECTION_KEY = 'plex-auto-bank-selection-v1';
+const STATE_INPUT_IDS = ['scan-path','scan-recursive','an-path','m-path','m-library','m-tags','p-url','p-smart','p-delete-name','p-source','p-destination','p-mode','p-import-name','p-import-url','s-path','s-library'];
 let __plexRaw = [];
 let __defaults = {};
 
@@ -311,6 +457,7 @@ function tab(name) {
   const btn = document.querySelector(`.tab-btn[data-tab="${name}"]`);
   if (btn) btn.classList.add('active');
   window.location.hash = 'pl-' + name;
+  if (name === 'auto') loadAutoRules();
 }
 
 async function post(url, body) {
@@ -337,7 +484,15 @@ async function detectToken() {
                 (t.exists ? 'existe' : 'absent') +
                 (t.note ? ' ('+t.note+')' : '') + '</li>';
       });
-      html += '</ul><em>' + (d.hint||'') + '</em>';
+      html += '</ul>';
+      if (Array.isArray(d.fix_steps) && d.fix_steps.length) {
+        html += '<strong>Étapes recommandées :</strong><ul style="margin:4px 0">';
+        d.fix_steps.forEach(step => {
+          html += '<li><code>' + escapeHtml(step) + '</code></li>';
+        });
+        html += '</ul>';
+      }
+      html += '<em>' + (d.hint||'') + '</em>';
       info.innerHTML = html;
     }
   } catch (e) { info.textContent = '❌ ' + e; }
@@ -537,59 +692,6 @@ async function doMatch() {
   out.innerHTML = html;
 }
 
-async function doDiff() {
-  const out = document.getElementById('d-out');
-  const left = document.getElementById('d-left').value.trim();
-  const right = document.getElementById('d-right').value.trim();
-  if (!left || !right) { renderError(out, 'Veuillez renseigner deux fichiers playlists.'); return; }
-  out.innerHTML = '<section class="surface result-panel"><p>⏳ Comparaison en cours...</p></section>';
-  const d = await post('/api/playlists/diff', {left, right});
-  if (d.error) { renderError(out, d.error); return; }
-  let html = renderMetricCards([
-    {value: d.left_count, label: 'Entrées A'},
-    {value: d.right_count, label: 'Entrées B'},
-    {value: d.same, label: 'Communes', tone: 'ok'},
-    {value: `+${d.added_count} / -${d.removed_count}`, label: 'Diff', tone: (d.added_count || d.removed_count) ? 'warn' : 'ok'},
-  ]);
-  html += renderResultPanel(
-    'Ajouts (B non présents dans A)',
-    d.added.length ? `<div class="result-list">${d.added.map((row) => `<article class="result-list-item"><strong>${escapeHtml(row.title || row.path)}</strong><span class="table-subline">${escapeHtml(row.artist || row.path)}</span></article>`).join('')}</div>` : '<p class="muted">Aucun ajout.</p>',
-    d.truncated ? 'liste tronquée' : 'complet'
-  );
-  html += renderResultPanel(
-    'Suppressions (A absents de B)',
-    d.removed.length ? `<div class="result-list">${d.removed.map((row) => `<article class="result-list-item"><strong>${escapeHtml(row.title || row.path)}</strong><span class="table-subline">${escapeHtml(row.artist || row.path)}</span></article>`).join('')}</div>` : '<p class="muted">Aucune suppression.</p>',
-    d.truncated ? 'liste tronquée' : 'complet'
-  );
-  out.innerHTML = html;
-}
-
-async function doDedupe() {
-  const out = document.getElementById('dd-out');
-  const path = document.getElementById('dd-path').value.trim();
-  if (!path) { renderError(out, 'Veuillez renseigner un fichier playlist.'); return; }
-  out.innerHTML = '<section class="surface result-panel"><p>⏳ Analyse doublons en cours...</p></section>';
-  const d = await post('/api/playlists/dedupe', {path});
-  if (d.error) { renderError(out, d.error); return; }
-  let html = renderMetricCards([
-    {value: d.track_count, label: 'Entrées totales'},
-    {value: d.exact_group_count, label: 'Groupes doublons exacts', tone: d.exact_group_count ? 'warn' : 'ok'},
-    {value: d.meta_group_count, label: 'Groupes doublons artiste/titre', tone: d.meta_group_count ? 'warn' : 'ok'},
-    {value: d.truncated ? 'Oui' : 'Non', label: 'Résultat tronqué', tone: d.truncated ? 'warn' : ''},
-  ]);
-
-  const exactBody = d.exact_groups.length
-    ? `<div class="result-list">${d.exact_groups.slice(0, 30).map((g) => `<article class="result-list-item"><strong>${escapeHtml(g.count)} occurences</strong><span class="table-subline">${escapeHtml(g.examples[0]?.path || g.key)}</span></article>`).join('')}</div>`
-    : '<p class="muted">Aucun doublon exact detecte.</p>';
-  const metaBody = d.meta_groups.length
-    ? `<div class="result-list">${d.meta_groups.slice(0, 30).map((g) => `<article class="result-list-item"><strong>${escapeHtml(g.count)} occurences</strong><span class="table-subline">${escapeHtml(g.key)}</span></article>`).join('')}</div>`
-    : '<p class="muted">Aucun doublon artiste/titre detecte.</p>';
-
-  html += renderResultPanel('Doublons exacts', exactBody, 'top 30');
-  html += renderResultPanel('Doublons metadonnees', metaBody, 'top 30');
-  out.innerHTML = html;
-}
-
 function getPlexFiltered() {
   const q = (document.getElementById('plex-q')?.value || '').trim().toLowerCase();
   const sortBy = document.getElementById('plex-sort')?.value || 'title';
@@ -637,46 +739,29 @@ function renderPlexList() {
         <span>Duree : ${Math.round((p.duration_ms||0)/60000)} min</span>
       </div>
       <div class="playlist-card-actions">
-        <button class="btn ghost" onclick='loadPlexTracks(${JSON.stringify({
-          ratingKey: String(p.rating_key || ''),
-          title: String(p.title || ''),
-        })})'>Voir pistes</button>
-        <button class="btn ghost" onclick='exportPlexM3UFromPlaylist(${JSON.stringify({
-          ratingKey: String(p.rating_key || ''),
-          title: String(p.title || ''),
-        })})'>Export M3U</button>
-        <button class="btn danger" onclick='deletePlexPlaylist(${JSON.stringify({
-          ratingKey: String(p.rating_key || ''),
-          title: String(p.title || ''),
-        })})'>Supprimer</button>
+        <button
+          type="button"
+          class="btn ghost"
+          data-action="plex-tracks"
+          data-rating-key="${escapeHtml(String(p.rating_key || ''))}"
+          data-title="${escapeHtml(String(p.title || ''))}">Voir pistes</button>
+        <button
+          type="button"
+          class="btn ghost"
+          data-action="plex-export"
+          data-rating-key="${escapeHtml(String(p.rating_key || ''))}"
+          data-title="${escapeHtml(String(p.title || ''))}">Export M3U</button>
+        <form method="post" action="/playlists/delete" class="inline-form">
+          <input type="hidden" name="rating_key" value="${escapeHtml(String(p.rating_key || ''))}">
+          <input type="hidden" name="playlist_name" value="${escapeHtml(String(p.title || ''))}">
+          <input type="hidden" name="url" value="${escapeHtml(document.getElementById('p-url')?.value || '')}">
+          <input type="hidden" name="token" value="${escapeHtml(document.getElementById('p-token')?.value || '')}">
+          <input type="hidden" name="tab" value="plex">
+          <button type="submit" class="btn danger">Supprimer</button>
+        </form>
       </div>
     </article>`).join('')}</div>`;
   out.innerHTML = html;
-}
-
-async function deletePlexPlaylist(playlist) {
-  const actionOut = document.getElementById('p-action-out');
-  if (!playlist?.ratingKey) {
-    actionOut.innerHTML = '<span class="err">❌ rating_key introuvable pour cette playlist.</span>';
-    return;
-  }
-  if (!confirm(`Supprimer la playlist "${playlist.title || 'sans nom'}" ?`)) return;
-
-  actionOut.textContent = '⏳ Suppression en cours...';
-  const d = await post('/api/playlists/plex/delete', {
-    rating_key: playlist.ratingKey,
-    playlist_name: playlist.title,
-    url: document.getElementById('p-url').value,
-    token: document.getElementById('p-token').value,
-  });
-  if (d.error) {
-    actionOut.innerHTML = `<span class="err">❌ ${escapeHtml(d.error)}</span>`;
-    return;
-  }
-
-  __plexRaw = __plexRaw.filter((p) => String(p.rating_key || '') !== String(d.rating_key || ''));
-  renderPlexList();
-  actionOut.innerHTML = `<span class="ok">✅ Playlist supprimée: ${escapeHtml(playlist.title || d.playlist_name || '')}</span>`;
 }
 
 async function deletePlaylistByName() {
@@ -710,10 +795,12 @@ async function deletePlaylistByName() {
 
 async function runImportWorkflow() {
   const actionOut = document.getElementById('p-import-out');
+  const rawPlaylistUrl = document.getElementById('p-import-url')?.value.trim() || '';
   const payload = {
     source: document.getElementById('p-source').value,
     destination: document.getElementById('p-destination').value.trim(),
     mode: document.getElementById('p-mode').value,
+    playlist_url: rawPlaylistUrl,
     url: document.getElementById('p-url').value,
     token: document.getElementById('p-token').value,
   };
@@ -731,6 +818,16 @@ async function runImportWorkflow() {
   }
   persistPlaylistState();
   actionOut.innerHTML = `<span class="ok">✅ Import lancé (${escapeHtml(d.source)} / ${escapeHtml(d.mode)}).</span> <a href="/job/${encodeURIComponent(d.run_id)}">Voir le job</a>`;
+}
+
+function detectSourceFromUrl(rawUrl) {
+  const value = String(rawUrl || '').toLowerCase();
+  if (value.includes('open.spotify.com')) return 'spotify';
+  if (value.includes('youtube.com') || value.includes('youtu.be')) return 'youtube';
+  if (value.includes('deezer.com')) return 'deezer';
+  if (value.includes('music.apple.com')) return 'apple_music';
+  if (value.includes('tidal.com')) return 'tidal';
+  return '';
 }
 
 function updateFileLabel(input) {
@@ -763,8 +860,43 @@ async function importSoundiizFile() {
   const actionOut = document.getElementById('p-import-out');
   const fileInput = document.getElementById('p-import-file');
   const file = fileInput?.files?.[0];
+  const rawPlaylistUrl = document.getElementById('p-import-url')?.value.trim() || '';
   if (!file) {
-    actionOut.innerHTML = '<span class="err">❌ Choisis un fichier .csv ou .json.</span>';
+    if (!rawPlaylistUrl) {
+      actionOut.innerHTML = '<span class="err">❌ Choisis un export Soundiiz (.csv/.json) ou colle un lien de playlist brut.</span>';
+      return;
+    }
+
+    if (!/^https?:\/\//i.test(rawPlaylistUrl)) {
+      actionOut.innerHTML = '<span class="err">❌ Le lien brut doit commencer par http:// ou https://.</span>';
+      return;
+    }
+
+    const selectedSource = document.getElementById('p-source').value;
+    const detectedSource = detectSourceFromUrl(rawPlaylistUrl);
+    const payload = {
+      source: detectedSource || selectedSource,
+      destination: document.getElementById('p-destination').value.trim(),
+      mode: document.getElementById('p-mode').value,
+      playlist_url: rawPlaylistUrl,
+      url: document.getElementById('p-url').value,
+      token: document.getElementById('p-token').value,
+    };
+
+    if (!payload.destination) {
+      actionOut.innerHTML = '<span class="err">❌ Dossier de destination requis.</span>';
+      return;
+    }
+
+    actionOut.textContent = '⏳ Lancement import depuis lien brut...';
+    const d = await post('/api/playlists/import/run', payload);
+    if (d.error) {
+      actionOut.innerHTML = `<span class="err">❌ ${escapeHtml(d.error)}</span>`;
+      return;
+    }
+
+    persistPlaylistState();
+    actionOut.innerHTML = `<span class="ok">✅ Import lancé depuis lien brut (${escapeHtml(d.source)}).</span> <a href="/job/${encodeURIComponent(d.run_id)}">Voir le job</a>`;
     return;
   }
 
@@ -931,6 +1063,504 @@ async function doStats() {
   out.innerHTML = html;
 }
 
+// ── Tab Auto : playlists personnalisées ───────────────────────────────────
+// État local des règles
+let __autoRules = [];
+let __autoGenRunId = null;
+let __autoGenPollTimer = null;
+let __autoPreviewItems = [];
+let __autoKnownNames = new Set();
+
+const SORT_OPTIONS = [
+  {value: 'play_count', label: 'Nb écoutes'},
+  {value: 'rating',     label: 'Note'},
+  {value: 'recent',     label: 'Ajout récent'},
+];
+
+function _emptyRule() {
+  return {name:'', prefix_auto:true, include_any:'', genres_any:'', exclude_any:'', min_rating:'', limit:'', sort_by:'play_count'};
+}
+
+function _parseTokens(str) {
+  return str.split(',').map(s => s.trim()).filter(Boolean);
+}
+
+function _ruleToApi(r) {
+  const obj = {name: r.name.trim(), prefix_auto: r.prefix_auto, sort_by: r.sort_by};
+  if (r.include_any.trim()) obj.include_any = _parseTokens(r.include_any);
+  if (r.genres_any.trim()) obj.genres_any = _parseTokens(r.genres_any);
+  if (r.exclude_any.trim()) obj.exclude_any = _parseTokens(r.exclude_any);
+  if (r.min_rating !== '' && r.min_rating !== null) obj.min_rating = Number(r.min_rating);
+  if (r.limit !== '' && r.limit !== null) obj.limit = Number(r.limit);
+  return obj;
+}
+
+function _ruleFromApi(obj) {
+  return {
+    name: obj.name || '',
+    prefix_auto: obj.prefix_auto !== false,
+    include_any: (obj.include_any || []).join(', '),
+    genres_any: (obj.genres_any || []).join(', '),
+    exclude_any: (obj.exclude_any || []).join(', '),
+    min_rating: obj.min_rating != null ? String(obj.min_rating) : '',
+    limit: obj.limit != null ? String(obj.limit) : '',
+    sort_by: obj.sort_by || 'play_count',
+  };
+}
+
+async function loadAutoRules() {
+  const out = document.getElementById('auto-rules-list');
+  out.innerHTML = '<p class="muted">⏳ Chargement...</p>';
+  const r = await fetch('/api/playlists/custom/rules');
+  const d = await r.json();
+  if (d.error) { out.innerHTML = `<p class="err">❌ ${escapeHtml(d.error)}</p>`; return; }
+  __autoRules = (d.playlists || []).map(_ruleFromApi);
+  const pathEl = document.getElementById('auto-config-path');
+  if (pathEl) pathEl.textContent = d.path || '';
+  renderAutoRules();
+  await refreshAutoCreatedPlaylists();
+}
+
+async function refreshAutoCreatedPlaylists() {
+  const out = document.getElementById('auto-created-out');
+  if (!out) return;
+  const showAll = document.getElementById('auto-show-all')?.checked === true;
+  out.innerHTML = '<section class="surface result-panel"><p>⏳ Chargement des playlists auto...</p></section>';
+
+  const d = await post('/api/playlists/plex', {
+    url: document.getElementById('p-url').value,
+    token: document.getElementById('p-token').value,
+    include_smart: true,
+  });
+
+  if (d.error) {
+    renderError(out, d.error + ' (utilise l\'onglet Plex pour détecter le token)');
+    return;
+  }
+
+  const rowsData = (d || []).filter((p) => {
+    if (showAll) return true;
+    const title = String(p.title || '');
+    return title.startsWith('[Auto]') || __autoKnownNames.has(title);
+  });
+  if (!rowsData.length) {
+    out.innerHTML = `<section class="surface result-panel"><p class="muted">${showAll ? 'Aucune playlist trouvée.' : 'Aucune playlist auto trouvée.'}</p></section>`;
+    return;
+  }
+
+  const rows = rowsData.map((p) => {
+    const ratingKey = String(p.rating_key || '');
+    const title = String(p.title || '');
+    const isAuto = title.startsWith('[Auto]');
+    const btnLabel = isAuto ? 'Supprimer' : 'Supprimer (existante)';
+    return `<article class="playlist-card">
+      <h3>${escapeHtml(title)}</h3>
+      <div class="playlist-meta-line">
+        <span>Pistes : ${escapeHtml(p.leaf_count || 0)}</span>
+        <span>Durée : ${Math.round((p.duration_ms || 0) / 60000)} min</span>
+      </div>
+      <div class="playlist-card-actions">
+        <form method="post" action="/playlists/delete" class="inline-form">
+          <input type="hidden" name="rating_key" value="${escapeHtml(ratingKey)}">
+          <input type="hidden" name="playlist_name" value="${escapeHtml(title)}">
+          <input type="hidden" name="url" value="${escapeHtml(document.getElementById('p-url')?.value || '')}">
+          <input type="hidden" name="token" value="${escapeHtml(document.getElementById('p-token')?.value || '')}">
+          <input type="hidden" name="tab" value="auto">
+          <button type="submit" class="btn danger">${btnLabel}</button>
+        </form>
+      </div>
+    </article>`;
+  }).join('');
+
+  out.innerHTML = `<div class="playlist-grid">${rows}</div>`;
+}
+
+function renderAutoRules() {
+  const out = document.getElementById('auto-rules-list');
+  if (!__autoRules.length) {
+    out.innerHTML = '<p class="muted">Aucune règle définie — clique sur <strong>+ Ajouter une règle</strong>.</p>';
+    return;
+  }
+  out.innerHTML = __autoRules.map((r, i) => renderRuleCard(r, i)).join('');
+}
+
+function renderRuleCard(r, i) {
+  const sortOpts = SORT_OPTIONS.map(o =>
+    `<option value="${o.value}" ${r.sort_by === o.value ? 'selected' : ''}>${escapeHtml(o.label)}</option>`
+  ).join('');
+  const ratings = ['', '1', '2', '3', '4', '5'].map(v =>
+    `<option value="${v}" ${r.min_rating === v ? 'selected' : ''}>${v === '' ? 'Aucun filtre' : '≥ ' + v + ' ★'}</option>`
+  ).join('');
+
+  return `<article class="surface section-block auto-rule-card" data-idx="${i}">
+    <div class="section-head">
+      <h3 style="font-size:14px">Règle ${i + 1} — <em>${escapeHtml(r.name || '(sans nom)')}</em></h3>
+      <button class="btn ghost" style="color:var(--err)" onclick="removeAutoRule(${i})" title="Supprimer cette règle">✕ Supprimer</button>
+    </div>
+    <div class="form-grid two-col compact-gap">
+      <div class="field-block span-2">
+        <label>Nom de la playlist <span class="err">*</span></label>
+        <input value="${escapeHtml(r.name)}" oninput="updateAutoRule(${i},'name',this.value)" placeholder="Ex: Ma Playlist Rock">
+      </div>
+      <div class="field-block span-2">
+        <label>Mots-clés inclus <span class="muted">(au moins un — séparés par virgule)</span></label>
+        <input value="${escapeHtml(r.include_any)}" oninput="updateAutoRule(${i},'include_any',this.value)" placeholder="rock, indie, punk">
+      </div>
+      <div class="field-block">
+        <label>Genres <span class="muted">(au moins un)</span></label>
+        <input value="${escapeHtml(r.genres_any)}" oninput="updateAutoRule(${i},'genres_any',this.value)" placeholder="electronic, pop/rock">
+      </div>
+      <div class="field-block">
+        <label>Mots-clés exclus</label>
+        <input value="${escapeHtml(r.exclude_any)}" oninput="updateAutoRule(${i},'exclude_any',this.value)" placeholder="live, remix">
+      </div>
+      <div class="field-block">
+        <label>Note minimale</label>
+        <select onchange="updateAutoRule(${i},'min_rating',this.value)">${ratings}</select>
+      </div>
+      <div class="field-block">
+        <label>Tri</label>
+        <select onchange="updateAutoRule(${i},'sort_by',this.value)">${sortOpts}</select>
+      </div>
+      <div class="field-block">
+        <label>Limite (nombre de titres)</label>
+        <input type="number" min="1" max="5000" value="${escapeHtml(r.limit)}" oninput="updateAutoRule(${i},'limit',this.value)" placeholder="Ex: 200">
+      </div>
+      <div class="field-block" style="align-self:end;padding-bottom:4px">
+        <label class="inline-check">
+          <input type="checkbox" ${r.prefix_auto ? 'checked' : ''} onchange="updateAutoRule(${i},'prefix_auto',this.checked)">
+          Préfixer avec <code>[Auto]</code>
+        </label>
+      </div>
+    </div>
+  </article>`;
+}
+
+function updateAutoRule(idx, field, value) {
+  if (!__autoRules[idx]) return;
+  __autoRules[idx][field] = value;
+}
+
+function removeAutoRule(idx) {
+  __autoRules.splice(idx, 1);
+  renderAutoRules();
+}
+
+function addAutoRule() {
+  __autoRules.push(_emptyRule());
+  renderAutoRules();
+  // Scroll vers la nouvelle règle
+  const cards = document.querySelectorAll('.auto-rule-card');
+  if (cards.length) cards[cards.length - 1].scrollIntoView({behavior:'smooth', block:'nearest'});
+}
+
+async function saveAutoRules() {
+  const saveBtn = document.getElementById('auto-save-btn');
+  const saveOut = document.getElementById('auto-save-out');
+  // Relit les valeurs depuis le DOM pour s'assurer de la cohérence
+  document.querySelectorAll('.auto-rule-card').forEach((card, i) => {
+    const inputs = card.querySelectorAll('input[oninput], input[onchange], select[onchange]');
+    // Les valeurs sont déjà dans __autoRules via les event handlers
+  });
+  const valid = __autoRules.filter(r => r.name.trim());
+  if (!valid.length && __autoRules.length) {
+    saveOut.innerHTML = '<span class="err">❌ Chaque règle doit avoir un nom.</span>';
+    return;
+  }
+  saveBtn.disabled = true;
+  saveBtn.textContent = '⏳ Sauvegarde...';
+  const r = await fetch('/api/playlists/custom/rules', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({playlists: valid.map(_ruleToApi)}),
+  });
+  const d = await r.json();
+  saveBtn.disabled = false;
+  saveBtn.textContent = '💾 Sauvegarder';
+  if (d.error) {
+    saveOut.innerHTML = `<span class="err">❌ ${escapeHtml(d.error)}</span>`;
+    return;
+  }
+  saveOut.innerHTML = `<span class="ok">✓ ${d.count} règle(s) sauvegardées dans <code>${escapeHtml(d.path)}</code></span>`;
+  // Met à jour le chemin affiché
+  const pathEl = document.getElementById('auto-config-path');
+  if (pathEl) pathEl.textContent = d.path || '';
+}
+
+async function generateAutoPlaylists(dryRun) {
+  const genOut = document.getElementById('auto-gen-out');
+  const genBtn = document.getElementById('auto-gen-btn');
+  const dryBtn = document.getElementById('auto-dry-btn');
+  const postersBtn = document.getElementById('auto-posters-btn');
+  genOut.innerHTML = '<section class="surface result-panel"><p>⏳ Lancement en cours...</p></section>';
+  if (__autoGenPollTimer) { clearInterval(__autoGenPollTimer); __autoGenPollTimer = null; }
+
+  const r = await fetch('/api/playlists/custom/generate', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({dry_run: dryRun}),
+  });
+  const d = await r.json();
+  if (d.error) {
+    genOut.innerHTML = `<section class="surface result-panel"><p class="err">❌ ${escapeHtml(d.error)}</p></section>`;
+    return;
+  }
+  __autoGenRunId = d.run_id;
+  genBtn.disabled = true; dryBtn.disabled = true;
+  if (postersBtn) postersBtn.disabled = true;
+  pollAutoGen();
+}
+
+async function generatePostersOnly() {
+  const postersOut = document.getElementById('auto-posters-out');
+  const genBtn = document.getElementById('auto-gen-btn');
+  const dryBtn = document.getElementById('auto-dry-btn');
+  const postersBtn = document.getElementById('auto-posters-btn');
+  const styleConfig = document.getElementById('auto-poster-style')?.value?.trim() || '';
+
+  postersOut.innerHTML = '<span>⏳ Lancement régénération posters...</span>';
+  if (__autoGenPollTimer) { clearInterval(__autoGenPollTimer); __autoGenPollTimer = null; }
+
+  const r = await fetch('/api/playlists/posters/generate', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({style_config: styleConfig}),
+  });
+  const d = await r.json();
+  if (d.error) {
+    postersOut.innerHTML = `<span class="err">❌ ${escapeHtml(d.error)}</span>`;
+    return;
+  }
+
+  __autoGenRunId = d.run_id;
+  if (genBtn) genBtn.disabled = true;
+  if (dryBtn) dryBtn.disabled = true;
+  if (postersBtn) postersBtn.disabled = true;
+  postersOut.innerHTML = `<span class="ok">✓ Régénération lancée.</span> <a href="/job/${encodeURIComponent(d.run_id)}">Voir le job</a>`;
+  pollAutoGen();
+}
+
+let _posterPreviewTimer = null;
+
+function posterPreviewDebounce() {
+  clearTimeout(_posterPreviewTimer);
+  _posterPreviewTimer = setTimeout(posterPreviewRefresh, 600);
+}
+
+function posterPreviewRefresh() {
+  clearTimeout(_posterPreviewTimer);
+  const name = (document.getElementById('poster-preview-name')?.value || '').trim();
+  if (!name) return;
+  const count = (document.getElementById('poster-preview-count')?.value || '').trim();
+  const style = (document.getElementById('auto-poster-style')?.value || '').trim();
+  const area = document.getElementById('poster-preview-area');
+  const img = document.getElementById('poster-preview-img');
+  const err = document.getElementById('poster-preview-err');
+  if (!area || !img) return;
+
+  let url = `/api/playlists/poster/preview?name=${encodeURIComponent(name)}`;
+  if (count) url += `&count=${encodeURIComponent(count)}`;
+  if (style) url += `&style=${encodeURIComponent(style)}`;
+  url += `&_=${Date.now()}`;
+
+  err.style.display = 'none';
+  area.style.display = 'block';
+  img.style.opacity = '0.4';
+  img.onerror = () => {
+    img.style.display = 'none';
+    err.textContent = '❌ Erreur de génération (Pillow manquant ou police introuvable ?)';
+    err.style.display = '';
+  };
+  img.onload = () => {
+    img.style.display = '';
+    img.style.opacity = '1';
+  };
+  img.src = url;
+}
+
+
+
+function _selectedAutoBankNames() {
+  return Array.from(document.querySelectorAll('input[data-auto-bank-name]:checked'))
+    .map((el) => String(el.getAttribute('data-auto-bank-name') || '').trim())
+    .filter(Boolean);
+}
+
+function _loadAutoBankSelectionState() {
+  try {
+    const raw = localStorage.getItem(AUTO_BANK_SELECTION_KEY);
+    if (!raw) return {selectedNames: [], appendExisting: false, replaceAllExisting: false};
+    const parsed = JSON.parse(raw);
+    const selectedNames = Array.isArray(parsed?.selectedNames)
+      ? parsed.selectedNames.map((x) => String(x || '').trim()).filter(Boolean)
+      : [];
+    const appendExisting = Boolean(parsed?.appendExisting);
+    const replaceAllExisting = Boolean(parsed?.replaceAllExisting);
+    return {selectedNames, appendExisting, replaceAllExisting};
+  } catch (_) {
+    return {selectedNames: [], appendExisting: false, replaceAllExisting: false};
+  }
+}
+
+function _saveAutoBankSelectionState() {
+  const payload = {
+    selectedNames: _selectedAutoBankNames(),
+    appendExisting: document.getElementById('auto-append-existing')?.checked === true,
+    replaceAllExisting: document.getElementById('auto-replace-existing-all')?.checked === true,
+  };
+  try {
+    localStorage.setItem(AUTO_BANK_SELECTION_KEY, JSON.stringify(payload));
+  } catch (_) {}
+}
+
+function _syncAutoBankModeToggles() {
+  const appendBox = document.getElementById('auto-append-existing');
+  const replaceBox = document.getElementById('auto-replace-existing-all');
+  if (!appendBox || !replaceBox) return;
+  if (replaceBox.checked) {
+    appendBox.checked = false;
+    appendBox.disabled = true;
+  } else {
+    appendBox.disabled = false;
+  }
+}
+
+function setAllAutoBankChecks(checked) {
+  document.querySelectorAll('input[data-auto-bank-name]').forEach((el) => {
+    el.checked = !!checked;
+  });
+  _saveAutoBankSelectionState();
+}
+
+function _renderAutoBank(items) {
+  const out = document.getElementById('auto-bank-out');
+  if (!out) return;
+  if (!items.length) {
+    out.innerHTML = '<section class="surface result-panel"><p class="muted">Aucune playlist détectée.</p></section>';
+    return;
+  }
+  const saved = _loadAutoBankSelectionState();
+  const savedSet = new Set(saved.selectedNames);
+  const hasSaved = savedSet.size > 0;
+  const appendBox = document.getElementById('auto-append-existing');
+  if (appendBox) appendBox.checked = saved.appendExisting;
+  const replaceBox = document.getElementById('auto-replace-existing-all');
+  if (replaceBox) replaceBox.checked = saved.replaceAllExisting;
+  _syncAutoBankModeToggles();
+  const rows = items.map((item, idx) => `
+    <label class="inline-check" style="display:flex;justify-content:space-between;gap:12px;padding:6px 8px;border:1px solid var(--line);border-radius:10px">
+      <span style="display:flex;gap:8px;align-items:center">
+        <input type="checkbox" data-auto-bank-name="${escapeHtml(item.name)}" ${(hasSaved ? savedSet.has(String(item.name || '')) : idx < 20) ? 'checked' : ''}>
+        <span>${escapeHtml(item.name)}</span>
+      </span>
+      <span class="muted">${escapeHtml(item.count)} titres</span>
+    </label>
+  `).join('');
+  out.innerHTML = `<section class="surface result-panel"><div class="stack">${rows}</div></section>`;
+  _saveAutoBankSelectionState();
+}
+
+async function previewAutoBank() {
+  const out = document.getElementById('auto-bank-out');
+  if (!out) return;
+  out.innerHTML = '<section class="surface result-panel"><p>⏳ Prévisualisation en cours...</p></section>';
+  const r = await fetch('/api/playlists/auto/preview', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({}),
+  });
+  const d = await r.json();
+  if (d.error) {
+    out.innerHTML = `<section class="surface result-panel"><p class="err">❌ ${escapeHtml(d.error)}</p></section>`;
+    return;
+  }
+  __autoPreviewItems = Array.isArray(d.items) ? d.items : [];
+  __autoKnownNames = new Set(__autoPreviewItems.map((x) => String(x.name || '')));
+  _renderAutoBank(__autoPreviewItems);
+}
+
+async function applySelectedAutoBank() {
+  const out = document.getElementById('auto-bank-out');
+  if (!out) return;
+  const names = _selectedAutoBankNames();
+  if (!names.length) {
+    out.innerHTML = '<section class="surface result-panel"><p class="err">❌ Aucune playlist cochée.</p></section>';
+    return;
+  }
+  _saveAutoBankSelectionState();
+  out.innerHTML = '<section class="surface result-panel"><p>⏳ Import en cours vers Plex...</p></section>';
+  const appendExisting = document.getElementById('auto-append-existing')?.checked === true;
+  const replaceAllExisting = document.getElementById('auto-replace-existing-all')?.checked === true;
+  const r = await fetch('/api/playlists/auto/apply', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({selected_names: names, append_existing: appendExisting, replace_all_existing: replaceAllExisting}),
+  });
+  const d = await r.json();
+  if (d.error) {
+    out.innerHTML = `<section class="surface result-panel"><p class="err">❌ ${escapeHtml(d.error)}</p></section>`;
+    return;
+  }
+  const created = Array.isArray(d.created) ? d.created : [];
+  const failed = Array.isArray(d.failed) ? d.failed : [];
+  const deletedBeforeCount = Number(d.deleted_before_count || 0);
+  created.forEach((x) => {
+    const name = String((x && x.name) || '').trim();
+    if (name) __autoKnownNames.add(name);
+  });
+  const createdHtml = created.slice(0, 25).map((x) => `<li>${escapeHtml(x.name)} (${escapeHtml(x.count)} titres)</li>`).join('');
+  const failedHtml = failed.slice(0, 25).map((x) => `<li>${escapeHtml(x.name)} (${escapeHtml(x.count)} titres)</li>`).join('');
+  out.innerHTML = `
+    <section class="surface result-panel stack">
+      <p class="${d.failed_count ? 'err' : 'ok'}">${d.failed_count ? '⚠ Import partiel' : '✓ Import terminé'} — ${escapeHtml(d.created_count)} créée(s), ${escapeHtml(d.failed_count)} en erreur, ${escapeHtml(d.unknown_count)} inconnue(s)</p>
+      ${deletedBeforeCount ? `<p class="muted">🧹 ${escapeHtml(deletedBeforeCount)} playlist(s) existante(s) supprimée(s) avant recréation.</p>` : ''}
+      ${createdHtml ? `<details open><summary>Créées</summary><ul>${createdHtml}</ul></details>` : ''}
+      ${failedHtml ? `<details open><summary>Échecs</summary><ul>${failedHtml}</ul></details>` : ''}
+    </section>
+  `;
+  await refreshAutoCreatedPlaylists();
+}
+
+function pollAutoGen() {
+  if (!__autoGenRunId) return;
+  let offset = 0;
+  const genOut = document.getElementById('auto-gen-out');
+  genOut.innerHTML = `<section class="surface result-panel"><div class="section-head"><h2>Sortie en direct</h2><a class="btn ghost" href="/job/${escapeHtml(__autoGenRunId)}" target="_blank">Voir Job ↗</a></div><pre id="auto-gen-log" style="font-family:var(--mono,monospace);font-size:12px;white-space:pre-wrap;max-height:480px;overflow-y:auto;margin:0"></pre><p id="auto-gen-status" class="muted" style="margin-top:8px"></p></section>`;
+
+  __autoGenPollTimer = setInterval(async () => {
+    try {
+      const r = await fetch(`/api/run/${__autoGenRunId}/output?offset=${offset}`);
+      const d = await r.json();
+      const log = document.getElementById('auto-gen-log');
+      const status = document.getElementById('auto-gen-status');
+      if (log && d.lines) {
+        d.lines.forEach(line => {
+          log.textContent += line + '\n';
+        });
+        log.scrollTop = log.scrollHeight;
+      }
+      offset = d.next_offset || offset;
+      if (status) status.textContent = `Durée : ${d.duration}s — Statut : ${d.status}`;
+      if (d.status !== 'running') {
+        clearInterval(__autoGenPollTimer); __autoGenPollTimer = null;
+        const genBtn = document.getElementById('auto-gen-btn');
+        const dryBtn = document.getElementById('auto-dry-btn');
+        const postersBtn = document.getElementById('auto-posters-btn');
+        if (genBtn) genBtn.disabled = false;
+        if (dryBtn) dryBtn.disabled = false;
+        if (postersBtn) postersBtn.disabled = false;
+        if (status) {
+          const tone = d.exit_code === 0 ? 'ok' : 'err';
+          status.innerHTML = `<span class="${tone}">${d.exit_code === 0 ? '✓ Terminé avec succès' : '✗ Terminé avec erreur (code ' + d.exit_code + ')'}</span> — ${d.duration}s`;
+        }
+        if (d.exit_code === 0) {
+          refreshAutoCreatedPlaylists();
+        }
+      }
+    } catch (_) {}
+  }, 1200);
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   restorePlaylistState();
   bindStatePersistence();
@@ -939,6 +1569,36 @@ document.addEventListener('DOMContentLoaded', () => {
   if (hash.startsWith('#pl-')) {
     const target = hash.replace('#pl-', '').trim();
     if (target) tab(target);
+    if (target === 'auto') loadAutoRules();
+  }
+});
+
+document.addEventListener('change', (event) => {
+  const target = event.target;
+  if (!(target instanceof Element)) return;
+  if (target.matches('input[data-auto-bank-name]') || target.matches('#auto-append-existing') || target.matches('#auto-replace-existing-all')) {
+    _syncAutoBankModeToggles();
+    _saveAutoBankSelectionState();
+  }
+});
+
+document.addEventListener('click', (event) => {
+  const button = event.target instanceof Element ? event.target.closest('button[data-action]') : null;
+  if (!button) return;
+
+  const payload = {
+    ratingKey: String(button.getAttribute('data-rating-key') || ''),
+    title: String(button.getAttribute('data-title') || ''),
+  };
+  const action = String(button.getAttribute('data-action') || '');
+
+  if (action === 'plex-tracks') {
+    loadPlexTracks(payload);
+    return;
+  }
+  if (action === 'plex-export') {
+    exportPlexM3UFromPlaylist(payload);
+    return;
   }
 });
 </script>

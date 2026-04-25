@@ -109,10 +109,26 @@ def delete_playlist(plex_url: str, token: str, rating_key: str) -> None:
 def create_playlist(plex_url: str, token: str, machine_id: str, title: str, track_ids: list[int]) -> None:
     if not track_ids:
         return
-    metadata_csv = ",".join(str(i) for i in track_ids)
-    uri = f"server://{machine_id}/com.plexapp.plugins.library/library/metadata/{metadata_csv}"
-    query = urllib.parse.urlencode({"type": "audio", "title": title, "smart": "0", "uri": uri})
-    plex_request("POST", f"{plex_url.rstrip('/')}/playlists?{query}", token)
+
+    # Create with first track, then append remaining tracks in bounded batches
+    # to avoid HTTP 400 caused by oversized query strings.
+    first_uri = f"server://{machine_id}/com.plexapp.plugins.library/library/metadata/{track_ids[0]}"
+    create_query = urllib.parse.urlencode({"type": "audio", "title": title, "smart": "0", "uri": first_uri})
+    created = ET.fromstring(plex_request("POST", f"{plex_url.rstrip('/')}/playlists?{create_query}", token))
+
+    playlist_node = created.find("Playlist") or created.find("Directory")
+    playlist_rating_key = playlist_node.attrib.get("ratingKey") if playlist_node is not None else None
+    if not playlist_rating_key:
+        raise RuntimeError(f"Playlist created but ratingKey missing for: {title}")
+
+    batch_size = 200
+    remaining = track_ids[1:]
+    for idx in range(0, len(remaining), batch_size):
+        batch_ids = remaining[idx:idx + batch_size]
+        metadata_csv = ",".join(str(i) for i in batch_ids)
+        uri = f"server://{machine_id}/com.plexapp.plugins.library/library/metadata/{metadata_csv}"
+        batch_query = urllib.parse.urlencode({"uri": uri})
+        plex_request("PUT", f"{plex_url.rstrip('/')}/playlists/{playlist_rating_key}/items?{batch_query}", token)
 
 
 def parse_m3u_file(path: Path) -> list[str]:
@@ -843,9 +859,36 @@ def cleanup_plex_playlists(
 
 
 def prepare_temp_db(db_path: Path) -> Path:
-    temp_path = Path(tempfile.mkstemp(prefix="plex_import_", suffix=".db")[1])
-    shutil.copy2(db_path, temp_path)
-    return temp_path
+    db_size = db_path.stat().st_size
+    candidates: list[Path] = []
+
+    tmpdir_env = os.environ.get("TMPDIR", "").strip()
+    if tmpdir_env:
+        candidates.append(Path(tmpdir_env).expanduser())
+    candidates.extend([Path("/data/tmp"), Path("/data"), Path("/tmp")])
+
+    checked: list[str] = []
+    for candidate in candidates:
+        try:
+            candidate.mkdir(parents=True, exist_ok=True)
+            free_bytes = shutil.disk_usage(candidate).free
+            checked.append(f"{candidate} (free={free_bytes})")
+            if free_bytes < db_size:
+                continue
+            temp_path = Path(tempfile.mkstemp(prefix="plex_import_", suffix=".db", dir=str(candidate))[1])
+            # Use SQLite online backup for a consistent snapshot of a live DB.
+            with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as src_conn:
+                with sqlite3.connect(str(temp_path)) as dst_conn:
+                    src_conn.backup(dst_conn)
+            return temp_path
+        except OSError:
+            checked.append(f"{candidate} (unusable)")
+
+    raise OSError(
+        28,
+        "No space left on device for temporary Plex DB copy",
+        f"checked: {', '.join(checked)}",
+    )
 
 
 def normalize(s: str) -> str:
@@ -1007,7 +1050,7 @@ def build_basename_index(conn: sqlite3.Connection) -> dict[str, set[int]]:
     index: dict[str, set[int]] = {}
     rows = conn.execute(
         """
-        SELECT mi.id, mp.file
+        SELECT mi.id, CAST(mp.file AS BLOB)
         FROM media_parts mp
         JOIN media_items m ON mp.media_item_id = m.id
         JOIN metadata_items mi ON m.metadata_item_id = mi.id
@@ -1016,7 +1059,11 @@ def build_basename_index(conn: sqlite3.Connection) -> dict[str, set[int]]:
     ).fetchall()
     for row in rows:
         item_id = int(row[0])
-        file_path = str(row[1] or "")
+        raw_file = row[1]
+        if isinstance(raw_file, (bytes, bytearray)):
+            file_path = raw_file.decode("utf-8", errors="replace")
+        else:
+            file_path = str(raw_file or "")
         if not file_path:
             continue
         basename = Path(file_path).name.casefold()
@@ -1440,7 +1487,10 @@ def main() -> int:
                     if existing and args.replace:
                         delete_playlist(args.plex_url, args.plex_token, existing)
                     if (not existing) or args.replace:
-                        create_playlist(args.plex_url, args.plex_token, machine_id, playlist_name, track_ids)
+                        try:
+                            create_playlist(args.plex_url, args.plex_token, machine_id, playlist_name, track_ids)
+                        except Exception as exc:
+                            print(f"[warn] création playlist échouée: {playlist_name} ({exc})")
 
     finally:
         if temp_db.exists():
