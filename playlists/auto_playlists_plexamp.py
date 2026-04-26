@@ -2376,6 +2376,24 @@ class PlexAmpAutoPlaylist:
             self.logger.warning("⚠️ Pillow non installé, pas de génération de posters (pip install Pillow)")
             return
 
+        def _make_gradient(size: int, c1: list, c2: list):
+            """Dégradé diagonal rapide via PIL (sans numpy)."""
+            # Crée deux images 1-pixel et les redimensionne puis mélange diagonalement
+            n = size * 2 - 1
+            row = Image.new('RGB', (n, 1))
+            row_data = bytes(
+                int(c1[i % 3] + (c2[i % 3] - c1[i % 3]) * (i // 3) / (n - 1))
+                for i in range(n * 3)
+            )
+            row = Image.frombytes('RGB', (n, 1), row_data)
+            # Coupe la bande diagonale
+            out = Image.new('RGB', (size, size))
+            for y in range(size):
+                strip = row.crop((y, 0, y + size, 1)).resize((size, 1))
+                out.paste(strip, (0, y))
+            return out
+
+
         FONT_PATH = str(self.poster_style.get("font_path", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"))
         EMOJI_FONT_PATH = str(self.poster_style.get("emoji_font_path", "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf"))
         SIZE = int(self.poster_style.get("size", 600))
@@ -2388,6 +2406,8 @@ class PlexAmpAutoPlaylist:
         TEXT_PADDING = int(self.poster_style.get("text_padding", 60))
         TITLE_COLOR = tuple(self.poster_style.get("title_color", (255, 255, 255, 255)))
         TITLE_SHADOW_COLOR = tuple(self.poster_style.get("title_shadow_color", (0, 0, 0, 180)))
+        TITLE_STROKE_WIDTH = int(self.poster_style.get("title_stroke_width", 0))
+        TITLE_STROKE_COLOR = tuple(self.poster_style.get("title_stroke_color", [0, 0, 0, 255]))
         SUBTITLE_COLOR = tuple(self.poster_style.get("subtitle_color", (200, 200, 200, 220)))
         LINE_COLOR = tuple(self.poster_style.get("line_color", (255, 255, 255, 80)))
 
@@ -2424,15 +2444,7 @@ class PlexAmpAutoPlaylist:
                     bg_path = None  # fallback dégradé
 
             if not bg_path:
-                # Créer l'image avec dégradé diagonal
-                img = Image.new('RGB', (SIZE, SIZE))
-                for y in range(SIZE):
-                    for x in range(SIZE):
-                        t = (x + y) / (2 * SIZE)
-                        r = int(c1[0] + (c2[0] - c1[0]) * t)
-                        g = int(c1[1] + (c2[1] - c1[1]) * t)
-                        b = int(c1[2] + (c2[2] - c1[2]) * t)
-                        img.putpixel((x, y), (r, g, b))
+                img = _make_gradient(SIZE, c1, c2)
 
             # Overlay sombre
             overlay = Image.new('RGBA', (SIZE, SIZE), (0, 0, 0, OVERLAY_ALPHA))
@@ -2445,7 +2457,7 @@ class PlexAmpAutoPlaylist:
                 emoji_font = ImageFont.truetype(EMOJI_FONT_PATH, EMOJI_SIZE)
                 bbox = draw.textbbox((0, 0), emoji, font=emoji_font)
                 ew = bbox[2] - bbox[0]
-                draw.text(((SIZE - ew) // 2, 140), emoji, font=emoji_font, embedded_color=True)
+                draw.text(((SIZE - ew) // 2, 140), emoji, font=emoji_font, fill=(255, 255, 255, 255))
             except Exception:
                 pass
 
@@ -2478,10 +2490,14 @@ class PlexAmpAutoPlaylist:
 
             y_pos = TITLE_START_Y
             for ln in lines:
-                bbox = draw.textbbox((0, 0), ln, font=font_title)
+                bbox = draw.textbbox((0, 0), ln, font=font_title, stroke_width=TITLE_STROKE_WIDTH)
                 tw = bbox[2] - bbox[0]
-                draw.text(((SIZE - tw) // 2 + 2, y_pos + 2), ln, fill=TITLE_SHADOW_COLOR, font=font_title)
-                draw.text(((SIZE - tw) // 2, y_pos), ln, fill=TITLE_COLOR, font=font_title)
+                if TITLE_STROKE_WIDTH > 0:
+                    draw.text(((SIZE - tw) // 2, y_pos), ln, fill=TITLE_COLOR, font=font_title,
+                              stroke_width=TITLE_STROKE_WIDTH, stroke_fill=TITLE_STROKE_COLOR)
+                else:
+                    draw.text(((SIZE - tw) // 2 + 2, y_pos + 2), ln, fill=TITLE_SHADOW_COLOR, font=font_title)
+                    draw.text(((SIZE - tw) // 2, y_pos), ln, fill=TITLE_COLOR, font=font_title)
                 y_pos += TITLE_LINE_STEP
 
             # Ligne décorative

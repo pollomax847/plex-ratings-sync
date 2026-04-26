@@ -1735,6 +1735,22 @@ def api_generate_posters_only():
     return jsonify(ok=True, run_id=run.run_id, cmd=cmd, style_config=style_config_raw)
 
 
+def _make_gradient(size: int, c1: list, c2: list):
+    """Dégradé diagonal rapide via PIL (sans numpy, ~50ms pour 600px)."""
+    from PIL import Image
+    n = size * 2 - 1
+    row_data = bytes(
+        int(c1[i % 3] + (c2[i % 3] - c1[i % 3]) * (i // 3) / (n - 1))
+        for i in range(n * 3)
+    )
+    row = Image.frombytes('RGB', (n, 1), row_data)
+    out = Image.new('RGB', (size, size))
+    for y in range(size):
+        strip = row.crop((y, 0, y + size, 1)).resize((size, 1))
+        out.paste(strip, (0, y))
+    return out
+
+
 def _find_poster_background(title: str, style: dict) -> Optional[Path]:
     """Cherche une image de fond dans poster_backgrounds/ correspondant au titre."""
     import re as _re
@@ -1785,6 +1801,8 @@ def _make_poster_preview_png(title: str, count: Optional[int], style: dict) -> b
     TEXT_PADDING = int(style.get("text_padding", 60))
     TITLE_COLOR = tuple(style.get("title_color", [255, 255, 255, 255]))
     TITLE_SHADOW_COLOR = tuple(style.get("title_shadow_color", [0, 0, 0, 180]))
+    TITLE_STROKE_WIDTH = int(style.get("title_stroke_width", 0))
+    TITLE_STROKE_COLOR = tuple(style.get("title_stroke_color", [0, 0, 0, 255]))
     SUBTITLE_COLOR = tuple(style.get("subtitle_color", [200, 200, 200, 220]))
     LINE_COLOR = tuple(style.get("line_color", [255, 255, 255, 80]))
     FONT_PATH = str(style.get("font_path", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"))
@@ -1825,14 +1843,7 @@ def _make_poster_preview_png(title: str, count: Optional[int], style: dict) -> b
             bg_path = None
 
     if not bg_path:
-        img = Image.new('RGB', (SIZE, SIZE))
-        for y in range(SIZE):
-            for x in range(SIZE):
-                t = (x + y) / (2 * SIZE)
-                r = int(c1[0] + (c2[0] - c1[0]) * t)
-                g = int(c1[1] + (c2[1] - c1[1]) * t)
-                b = int(c1[2] + (c2[2] - c1[2]) * t)
-                img.putpixel((x, y), (r, g, b))
+        img = _make_gradient(SIZE, c1, c2)
 
     overlay = Image.new('RGBA', (SIZE, SIZE), (0, 0, 0, OVERLAY_ALPHA))
     img = img.convert('RGBA')
@@ -1844,7 +1855,7 @@ def _make_poster_preview_png(title: str, count: Optional[int], style: dict) -> b
         emoji_font = ImageFont.truetype(EMOJI_FONT_PATH, EMOJI_SIZE)
         bbox = draw.textbbox((0, 0), emoji, font=emoji_font)
         ew = bbox[2] - bbox[0]
-        draw.text(((SIZE - ew) // 2, 140), emoji, font=emoji_font, embedded_color=True)
+        draw.text(((SIZE - ew) // 2, 140), emoji, font=emoji_font, fill=(255, 255, 255, 255))
     except Exception:
         pass
 
@@ -1879,10 +1890,14 @@ def _make_poster_preview_png(title: str, count: Optional[int], style: dict) -> b
 
     y_pos = TITLE_START_Y
     for ln in lines:
-        bbox = draw.textbbox((0, 0), ln, font=font_title)
+        bbox = draw.textbbox((0, 0), ln, font=font_title, stroke_width=TITLE_STROKE_WIDTH)
         tw = bbox[2] - bbox[0]
-        draw.text(((SIZE - tw) // 2 + 2, y_pos + 2), ln, fill=TITLE_SHADOW_COLOR, font=font_title)
-        draw.text(((SIZE - tw) // 2, y_pos), ln, fill=TITLE_COLOR, font=font_title)
+        if TITLE_STROKE_WIDTH > 0:
+            draw.text(((SIZE - tw) // 2, y_pos), ln, fill=TITLE_COLOR, font=font_title,
+                      stroke_width=TITLE_STROKE_WIDTH, stroke_fill=TITLE_STROKE_COLOR)
+        else:
+            draw.text(((SIZE - tw) // 2 + 2, y_pos + 2), ln, fill=TITLE_SHADOW_COLOR, font=font_title)
+            draw.text(((SIZE - tw) // 2, y_pos), ln, fill=TITLE_COLOR, font=font_title)
         y_pos += TITLE_LINE_STEP
 
     draw.line([(TEXT_PADDING, y_pos + 10), (SIZE - TEXT_PADDING, y_pos + 10)], fill=LINE_COLOR, width=2)

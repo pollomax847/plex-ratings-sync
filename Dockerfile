@@ -35,6 +35,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         tzdata \
         ca-certificates \
         locales \
+        fonts-noto-color-emoji \
+        fonts-noto-extra \
     && sed -i 's/^# *\(fr_FR.UTF-8\)/\1/' /etc/locale.gen \
     && locale-gen \
     && rm -rf /var/lib/apt/lists/*
