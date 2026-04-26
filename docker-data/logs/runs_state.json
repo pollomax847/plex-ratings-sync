@@ -1,7 +1,47 @@
 {
   "version": 1,
-  "saved_at": 1777119178.3411396,
+  "saved_at": 1777229358.998626,
   "runs": [
+    {
+      "run_id": "1777229316-4b322d",
+      "job_key": "playlists_posters_only",
+      "cmd": [
+        "python3",
+        "playlists/auto_playlists_plexamp.py",
+        "--verbose",
+        "--posters-only",
+        "--plex-db",
+        "/plex/Plug-in Support/Databases/com.plexapp.plugins.library.db"
+      ],
+      "started_at": 1777229316.225387,
+      "ended_at": 1777229358.9986145,
+      "exit_code": 0,
+      "log_path": "/data/logs/1777229316-4b322d-playlists_posters_only.log"
+    },
+    {
+      "run_id": "1777229212-d73c26",
+      "job_key": "playlists_gen",
+      "cmd": [
+        "bash",
+        "playlists/generate_plexamp_playlists.sh"
+      ],
+      "started_at": 1777229212.3097622,
+      "ended_at": 1777229296.6015832,
+      "exit_code": 1,
+      "log_path": "/data/logs/1777229212-d73c26-playlists_gen.log"
+    },
+    {
+      "run_id": "1777229189-a9f36d",
+      "job_key": "itunes_analyze",
+      "cmd": [
+        "python3",
+        "itunes/itunes_analyzer.py"
+      ],
+      "started_at": 1777229189.7437055,
+      "ended_at": 1777229190.277253,
+      "exit_code": 1,
+      "log_path": "/data/logs/1777229189-a9f36d-itunes_analyze.log"
+    },
     {
       "run_id": "1777119178-34e237",
       "job_key": "daily",

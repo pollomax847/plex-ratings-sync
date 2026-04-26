@@ -163,6 +163,7 @@ class PlexPlaylistManager:
                 
                 playlist_id = cursor.lastrowid
                 matched = 0
+                seen_track_ids: set = set()
                 
                 logger.info(f"\n🔍 Searching {len(tracks)} tracks in Plex library...")
                 for idx, track in enumerate(tracks):
@@ -171,7 +172,8 @@ class PlexPlaylistManager:
                         track.get('artist', '')
                     )
                     
-                    if track_id:
+                    if track_id and track_id not in seen_track_ids:
+                        seen_track_ids.add(track_id)
                         cursor.execute("""
                             INSERT INTO play_queue_generators (
                                 playlist_id, metadata_item_id, "order",

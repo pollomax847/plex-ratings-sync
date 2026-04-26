@@ -202,11 +202,13 @@ systemctl --user daemon-reload
 
 ### 6.1 Timers disponibles
 
+Pour le comportement actuel du cron Docker (automatisation horaire en journée), voir [AUTO_README.md](AUTO_README.md).
+
 | Timer | Fréquence | Rôle |
 |---|---|---|
 | `plex-ratings-sync.timer` | Tous les jours 22h | Sync ratings Plex → ID3 |
 | `plex-daily-workflow.timer` | Tous les jours 02h | Workflow 1⭐/2⭐ |
-| `plex-auto-playlists.timer` | Hebdo | Régénère les playlists Plexamp |
+| `plex-auto-playlists.timer` | Tous les jours 23h | Régénère les playlists Plexamp |
 | `plex-export-playlists.timer` | Quotidien | Exporte les playlists en M3U |
 | `plex-playlists-mybook-sync.timer` | Après export | Copie vers MyBook |
 

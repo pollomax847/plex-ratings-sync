@@ -121,11 +121,13 @@ used by workflows. Configurable via env variables (`NOTIFICATION_APP_NAME`,
 Units in [systemd/](systemd/) are copied to `~/.config/systemd/user/` and
 **enabled** by `install_en.sh`.
 
+For the current Docker cron behavior (hourly daytime automation), see [AUTO_README.md](AUTO_README.md).
+
 | Timer | Schedule | Service |
 |---|---|---|
 | `plex-ratings-sync.timer` | Daily 22:00 | Plex ratings → ID3 |
 | `plex-daily-workflow.timer` | Daily 02:00 | 1★/2★ workflow |
-| `plex-auto-playlists.timer` | Weekly | Plexamp playlists |
+| `plex-auto-playlists.timer` | Daily 23:00 | Plexamp playlists |
 | `plex-export-playlists.timer` | Daily | M3U export |
 | `plex-playlists-mybook-sync.timer` | After export | MyBook copy |
 

@@ -29,7 +29,6 @@ import csv
 import difflib
 import os
 import re
-import shutil
 import sqlite3
 import sys
 import tempfile
@@ -38,7 +37,7 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Sequence
 
 # ─── defaults ────────────────────────────────────────────────────────────────
 
@@ -55,6 +54,12 @@ DEFAULT_SLSKD_URL  = os.environ.get("SLSKD_URL",  "http://localhost:5030")
 DEFAULT_SLSKD_KEY  = os.environ.get("SLSKD_API_KEY", "")
 
 FUZZY_CUTOFF = 0.82  # SequenceMatcher ratio threshold
+
+TrackRow = dict[str, str]
+TitleArtistIndex = dict[tuple[str, str], int]
+TitleIndex = dict[str, list[int]]
+Candidate = tuple[str, str, int]
+Candidates = list[Candidate]
 
 # ─── Plex API helpers ─────────────────────────────────────────────────────────
 
@@ -89,8 +94,16 @@ def delete_playlist(plex_url: str, token: str, rating_key: str) -> None:
     plex_request("DELETE", f"{plex_url.rstrip('/')}/playlists/{rating_key}", token)
 
 
+def get_playlist_item_ids(plex_url: str, token: str, rating_key: str) -> set[int]:
+    """Return the set of metadata item IDs already in a playlist."""
+    root = ET.fromstring(
+        plex_request("GET", f"{plex_url.rstrip('/')}/playlists/{rating_key}/items", token)
+    )
+    return {int(t.attrib["ratingKey"]) for t in root.findall("Track") if "ratingKey" in t.attrib}
+
+
 def create_playlist(
-    plex_url: str, token: str, machine_id: str, title: str, track_ids: list
+    plex_url: str, token: str, machine_id: str, title: str, track_ids: list[int]
 ) -> None:
     if not track_ids:
         print("  ⚠️  No tracks to add — playlist not created.", flush=True)
@@ -148,21 +161,24 @@ def copy_db(db_path: Path) -> Path:
     return tmp
 
 
-def build_track_index(db_path: Path) -> tuple:
+def build_track_index(db_path: Path) -> tuple[TitleArtistIndex, TitleIndex, Candidates]:
     """
     Returns:
       ta_index:    {(norm_title, norm_artist): track_id}   exact match
       t_index:     {norm_title: [track_id, ...]}           title-only fallback
       candidates:  [(norm_title, norm_artist, track_id)]   for fuzzy search
     """
-    ta_index: dict = {}
-    t_index: dict = {}
-    candidates: list = []
+    ta_index: TitleArtistIndex = {}
+    t_index: TitleIndex = {}
+    candidates: Candidates = []
+
+    def _decode_bytes(b: bytes) -> str:
+        return b.decode("utf-8", errors="replace")
 
     with sqlite3.connect(str(db_path)) as conn:
-        conn.text_factory = lambda b: b.decode("utf-8", errors="replace")
+        conn.text_factory = _decode_bytes
         conn.row_factory = sqlite3.Row
-        rows = conn.execute(
+        rows: list[sqlite3.Row] = conn.execute(
             """
             SELECT mi.id, mi.title,
                    COALESCE(art.title, '') AS artist
@@ -232,7 +248,7 @@ def clean_title(title: str) -> str:
     return t
 
 
-def split_artist_dash_title(title: str, csv_artist: str) -> tuple:
+def split_artist_dash_title(title: str, csv_artist: str) -> tuple[Optional[str], Optional[str]]:
     """
     If title looks like 'ARTIST - SONG', return (ARTIST, SONG).
     Returns (None, None) if pattern not detected.
@@ -251,9 +267,9 @@ def split_artist_dash_title(title: str, csv_artist: str) -> tuple:
 def _try_match_title_artist(
     title: str,
     artist: str,
-    ta_index: dict,
-    t_index: dict,
-    candidates: list,
+    ta_index: TitleArtistIndex,
+    t_index: TitleIndex,
+    candidates: Candidates,
 ) -> Optional[int]:
     """Single-attempt exact/fuzzy match for a given (title, artist) pair."""
     nt = norm(title)
@@ -274,7 +290,7 @@ def _try_match_title_artist(
         return t_index[nt][0]
 
     # fuzzy title
-    unique_titles = list({c[0] for c in candidates})
+    unique_titles: list[str] = list({c[0] for c in candidates})
     close = difflib.get_close_matches(nt, unique_titles, n=5, cutoff=FUZZY_CUTOFF)
     if not close:
         return None
@@ -301,9 +317,9 @@ def _try_match_title_artist(
 def match_track(
     title: str,
     artist: str,
-    ta_index: dict,
-    t_index: dict,
-    candidates: list,
+    ta_index: TitleArtistIndex,
+    t_index: TitleIndex,
+    candidates: Candidates,
 ) -> Optional[int]:
     """Try multiple title/artist variations to find a Plex track."""
 
@@ -323,15 +339,17 @@ def match_track(
     emb_artist, emb_title = split_artist_dash_title(title, artist)
     if emb_title:
         clean_emb = clean_title(emb_title)
-        for t_try, a_try in [
-            (emb_title, emb_artist),
-            (clean_emb, emb_artist),
+        extracted_artist = emb_artist or ""
+        variations: list[tuple[str, str]] = [
+            (emb_title, extracted_artist),
+            (clean_emb, extracted_artist),
             (emb_title, artist),
             (clean_emb, artist),
-        ]:
+        ]
+        for t_try, a_try in variations:
             if not t_try:
                 continue
-            tid = _try_match_title_artist(t_try, a_try or "", ta_index, t_index, candidates)
+            tid = _try_match_title_artist(t_try, a_try, ta_index, t_index, candidates)
             if tid is not None:
                 return tid
 
@@ -361,18 +379,18 @@ _ARTIST_COLS = {"artist", "artists", "artiste", "artistes", "performer"}
 _ALBUM_COLS  = {"album"}
 
 
-def _pick_col(fieldnames: list, aliases: set) -> Optional[str]:
+def _pick_col(fieldnames: Sequence[str], aliases: set[str]) -> Optional[str]:
     for f in fieldnames:
         if f.strip().lower() in aliases:
             return f
     return None
 
 
-def read_csv(csv_path: Path) -> list:
+def read_csv(csv_path: Path) -> list[TrackRow]:
     """
     Returns list of dicts with 'title', 'artist', 'album' keys (may be empty strings).
     """
-    tracks = []
+    tracks: list[TrackRow] = []
     with open(csv_path, newline="", encoding="utf-8-sig", errors="replace") as fh:
         # Detect delimiter (comma or tab or semicolon)
         sample = fh.read(4096)
@@ -399,9 +417,14 @@ def read_csv(csv_path: Path) -> list:
             )
 
         for row in reader:
-            t = (row.get(title_col) or "").strip()
-            a = (row.get(artist_col) or "").strip() if artist_col else ""
-            al = (row.get(album_col) or "").strip() if album_col else ""
+            row_dict: dict[str, str] = {
+                str(k): (v or "")
+                for k, v in row.items()
+                if k is not None
+            }
+            t = row_dict.get(title_col, "").strip()
+            a = row_dict.get(artist_col, "").strip() if artist_col else ""
+            al = row_dict.get(album_col, "").strip() if album_col else ""
             if t:
                 tracks.append({"title": t, "artist": a, "album": al})
 
@@ -412,7 +435,7 @@ def read_csv(csv_path: Path) -> list:
 
 
 def _run_slskd_downloads(
-    missed: list, slskd_url: str, slskd_key: str, dry_run: bool
+    missed: list[TrackRow], slskd_url: str, slskd_key: str, dry_run: bool
 ) -> None:
     """Search slskd for each missed track and queue the best result for download."""
     # Lazy import to avoid hard dependency when slskd is not used
@@ -447,7 +470,7 @@ def _run_slskd_downloads(
         emb_artist, emb_title = split_artist_dash_title(title, artist)
         if emb_title:
             if not artist:
-                artist = emb_artist
+                artist = emb_artist or ""
             title = clean_title(emb_title)
 
         label = f"{artist} — {title}" if artist else title
@@ -490,7 +513,7 @@ def _run_slskd_downloads(
 # ─── main ─────────────────────────────────────────────────────────────────────
 
 
-def parse_args():
+def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Import a CSV playlist into Plex by matching title+artist."
     )
@@ -585,8 +608,8 @@ def main():
 
     # ── Match tracks ──────────────────────────────────────────────────────────
     print("\n🎯 Matching tracks…", flush=True)
-    matched_ids: list = []
-    missed: list = []
+    matched_ids: list[int] = []
+    missed: list[TrackRow] = []
 
     for row in csv_tracks:
         title, artist = row["title"], row["artist"]
@@ -597,6 +620,17 @@ def main():
         else:
             missed.append(row)
             print(f"  ❓ NOT FOUND: {title!r} — {artist!r}", flush=True)
+
+    # Dédupliquer en préservant l'ordre d'apparition
+    seen_ids: set[int] = set()
+    deduped_ids: list[int] = []
+    for mid in matched_ids:
+        if mid not in seen_ids:
+            seen_ids.add(mid)
+            deduped_ids.append(mid)
+    if len(deduped_ids) < len(matched_ids):
+        print(f"  🔁 {len(matched_ids) - len(deduped_ids)} doublon(s) retiré(s) du CSV.", flush=True)
+    matched_ids = deduped_ids
 
     print(f"\n  ✅ Matched  : {len(matched_ids)}/{len(csv_tracks)}")
     print(f"  ❌ Not found: {len(missed)}", flush=True)
@@ -641,13 +675,17 @@ def main():
         existing_rk = None
 
     if existing_rk and args.append:
+        # Exclure les morceaux déjà présents dans la playlist
+        existing_item_ids = get_playlist_item_ids(args.plex_url, args.plex_token, existing_rk)
+        before = len(matched_ids)
+        matched_ids = [i for i in matched_ids if i not in existing_item_ids]
+        if before - len(matched_ids):
+            print(f"  🔁 {before - len(matched_ids)} morceau(x) déjà dans la playlist, ignoré(s).", flush=True)
+        if not matched_ids:
+            print("  ℹ️  Aucun nouveau morceau à ajouter.", flush=True)
+            return
+
         # Append by adding to existing playlist
-        csv_ids = ",".join(str(i) for i in matched_ids)
-        uri = (
-            f"server://{machine_id}/com.plexapp.plugins.library"
-            f"/library/metadata/{csv_ids}"
-        )
-        q = urllib.parse.urlencode({"uri": uri})
         batch_size = 200
         for idx in range(0, len(matched_ids), batch_size):
             batch = matched_ids[idx : idx + batch_size]
