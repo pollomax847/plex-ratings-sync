@@ -81,6 +81,24 @@
 
 <section class="surface summary-panel">
   <div class="section-head">
+    <h2>Outils intégrés</h2>
+    <span class="section-meta">Disponibles dans le conteneur webui</span>
+  </div>
+  <ul class="signal-list config-check-list">
+    {% for tool in tools %}
+    <li class="config-check-item {% if tool.available %}is-present{% else %}is-missing{% endif %}">
+      <div>
+        <strong>{{ tool.command }}</strong>
+        <div class="table-subline">{{ tool.path if tool.path else 'introuvable dans le PATH' }}</div>
+      </div>
+      <span class="pill {% if tool.available %}success{% else %}failed{% endif %}">{{ 'ok' if tool.available else 'missing' }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+
+<section class="surface summary-panel">
+  <div class="section-head">
     <h2>Contrôle du conteneur</h2>
     <span class="section-meta">Docker webui</span>
   </div>

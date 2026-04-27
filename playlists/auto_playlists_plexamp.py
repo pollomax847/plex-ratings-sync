@@ -22,6 +22,8 @@ import urllib.parse
 import io
 import xml.etree.ElementTree as ET
 
+from plex_api import default_plex_url
+
 # Préfixe d'affichage des playlists générées.
 # Laisse vide pour ne rien afficher devant le nom des playlists.
 AUTO_PLAYLIST_PREFIX = ""
@@ -39,14 +41,30 @@ GENERIC_PLEX_GENRES = {
 def _detect_default_plex_url() -> str:
     """Retourne l'URL Plex par défaut selon le contexte d'exécution.
     Dans Docker (/.dockerenv présent) → host.docker.internal, sinon localhost."""
-    if Path("/.dockerenv").is_file():
-        return "http://host.docker.internal:32400"
-    return "http://localhost:32400"
+    return default_plex_url()
 
 PLEX_URL = os.getenv("PLEX_URL", _detect_default_plex_url()).rstrip("/")
 PLEX_TOKEN = os.getenv("PLEX_TOKEN", "WQQySxr3SBPY-Sn77Yuk")
 PLEX_MACHINE_ID = os.getenv("PLEX_MACHINE_ID", "e0c0f73d4bbd7109a0aad8c16b20db9da5ffa4c4")
 LASTFM_API_URL = "https://ws.audioscrobbler.com/2.0/"
+
+# Supprime les pictogrammes/emoji des noms de playlists générés.
+EMOJI_CHARS_RE = re.compile(
+    "["
+    "\U0001F1E6-\U0001F1FF"  # drapeaux
+    "\U0001F300-\U0001F5FF"  # symboles et pictogrammes
+    "\U0001F600-\U0001F64F"  # émoticônes
+    "\U0001F680-\U0001F6FF"  # transport/cartes
+    "\U0001F700-\U0001F77F"
+    "\U0001F780-\U0001F7FF"
+    "\U0001F800-\U0001F8FF"
+    "\U0001F900-\U0001F9FF"  # symboles supplémentaires
+    "\U0001FA00-\U0001FAFF"
+    "\u2600-\u26FF"          # symboles divers
+    "\u2700-\u27BF"          # dingbats
+    "]+",
+    flags=re.UNICODE,
+)
 
 class PlexAmpAutoPlaylist:
     _no_posters: bool = False
@@ -301,7 +319,48 @@ class PlexAmpAutoPlaylist:
                 matched = matched[:500]
                 all_playlists[f'{full_key} ({len(matched)} titres)'] = matched
         all_playlists.update(self._load_custom_playlists_from_json(tracks, custom_config))
-        return all_playlists
+        return self._normalize_playlist_names(all_playlists)
+
+    @staticmethod
+    def _strip_emojis(text: str) -> str:
+        """Retire les emoji des noms tout en conservant accents, chiffres et ponctuation utile."""
+        cleaned = EMOJI_CHARS_RE.sub('', text)
+        cleaned = cleaned.replace('\uFE0F', '').replace('\u200D', '')
+        cleaned = re.sub(r'\s{2,}', ' ', cleaned).strip()
+        return cleaned
+
+    def _normalize_playlist_names(self, playlists: Dict[str, List[Dict]]) -> Dict[str, List[Dict]]:
+        """Normalise les noms de playlists en supprimant les emoji avant création/export."""
+        normalized: Dict[str, List[Dict]] = {}
+        renamed = 0
+
+        for name, tracks in playlists.items():
+            clean_name = self._strip_emojis(name)
+            if clean_name != name:
+                renamed += 1
+
+            if clean_name in normalized:
+                seen_ids = {int(t.get('id')) for t in normalized[clean_name] if t.get('id')}
+                for track in tracks:
+                    track_id = track.get('id')
+                    if track_id is None:
+                        normalized[clean_name].append(track)
+                        continue
+                    try:
+                        tid = int(track_id)
+                    except Exception:
+                        normalized[clean_name].append(track)
+                        continue
+                    if tid not in seen_ids:
+                        normalized[clean_name].append(track)
+                        seen_ids.add(tid)
+            else:
+                normalized[clean_name] = tracks
+
+        if renamed:
+            self.logger.info(f"🧹 Emojis retirés de {renamed} noms de playlists")
+
+        return normalized
 
     def _track_search_blob(self, track: Dict) -> str:
         parts = [
@@ -2464,36 +2523,66 @@ class PlexAmpAutoPlaylist:
             return False
         try:
             data = self._plex_api('GET', '/playlists')
-            existing_rk = None
-            for p in data.get('MediaContainer', {}).get('Metadata', []):
-                if p.get('title') == playlist_name:
-                    existing_rk = p['ratingKey']
-                    break
+            matching_playlists = [
+                p for p in data.get('MediaContainer', {}).get('Metadata', [])
+                if p.get('title') == playlist_name and p.get('ratingKey')
+            ]
+            existing_rks = [p['ratingKey'] for p in matching_playlists]
+            existing_rk = existing_rks[0] if existing_rks else None
+
+            if len(existing_rks) > 1:
+                self.logger.warning(
+                    f"  🧹 {len(existing_rks)} playlists homonymes détectées pour {playlist_name}; consolidation en cours"
+                )
 
             # Mode ajout: conserve la playlist existante et ajoute uniquement les nouvelles pistes.
             if append_existing and existing_rk is not None:
                 meta = self._plex_api('GET', f'/playlists/{existing_rk}/items')
                 existing_items = meta.get('MediaContainer', {}).get('Metadata', [])
                 existing_ids = {int(i.get('ratingKey')) for i in existing_items if i.get('ratingKey')}
-                to_add = [t for t in tracks if int(t['id']) not in existing_ids]
+                duplicate_ids: List[int] = []
+                duplicate_seen: set[int] = set()
+                for duplicate_rk in existing_rks[1:]:
+                    duplicate_meta = self._plex_api('GET', f'/playlists/{duplicate_rk}/items')
+                    duplicate_items = duplicate_meta.get('MediaContainer', {}).get('Metadata', [])
+                    for item in duplicate_items:
+                        rating_key = item.get('ratingKey')
+                        if not rating_key:
+                            continue
+                        item_id = int(rating_key)
+                        if item_id not in existing_ids and item_id not in duplicate_seen:
+                            duplicate_seen.add(item_id)
+                            duplicate_ids.append(item_id)
+
+                to_add = []
+                queued_ids = set()
+                for item_id in duplicate_ids + [int(t['id']) for t in tracks]:
+                    if item_id not in existing_ids and item_id not in queued_ids:
+                        queued_ids.add(item_id)
+                        to_add.append(item_id)
                 if not to_add:
+                    for duplicate_rk in existing_rks[1:]:
+                        self._plex_api('DELETE', f'/playlists/{duplicate_rk}')
                     self.logger.info(f"✅ Playlist inchangée: {playlist_name} (aucune nouvelle piste)")
                     return True
 
                 BATCH = 200
                 for i in range(0, len(to_add), BATCH):
                     batch = to_add[i:i+BATCH]
-                    ids_str = ','.join(str(t['id']) for t in batch)
+                    ids_str = ','.join(str(item_id) for item_id in batch)
                     uri = f'server://{PLEX_MACHINE_ID}/com.plexapp.plugins.library/library/metadata/{ids_str}'
                     params = urllib.parse.urlencode({'uri': uri})
                     self._plex_api('PUT', f'/playlists/{existing_rk}/items?{params}')
+
+                for duplicate_rk in existing_rks[1:]:
+                    self._plex_api('DELETE', f'/playlists/{duplicate_rk}')
 
                 self.logger.info(f"✅ Playlist mise à jour: {playlist_name} (+{len(to_add)} pistes)")
                 return True
 
             # Mode remplacement: supprimer puis recréer si la playlist existe déjà
-            if existing_rk is not None:
-                self._plex_api('DELETE', f'/playlists/{existing_rk}')
+            for rating_key in existing_rks:
+                self._plex_api('DELETE', f'/playlists/{rating_key}')
 
             # Créer la playlist avec le 1er item
             first_uri = f'server://{PLEX_MACHINE_ID}/com.plexapp.plugins.library/library/metadata/{tracks[0]["id"]}'

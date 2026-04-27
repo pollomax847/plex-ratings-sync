@@ -30,6 +30,15 @@ from pathlib import Path
 from typing import Iterable
 import re
 
+from plex_api import (
+    default_plex_url,
+    plex_create_audio_playlist,
+    plex_delete_playlist,
+    plex_find_playlist_rating_keys,
+    plex_machine_identifier,
+    plex_request,
+)
+
 
 DEFAULT_PLEX_DB = Path(
     "/var/snap/plexmediaserver/common/Library/Application Support/"
@@ -545,33 +554,16 @@ class PlexPlaylistManager:
         return len(track_ids)
 
     def _plex_request(self, method: str, url: str, token: str) -> bytes:
-        request = urllib.request.Request(url=url, method=method)
-        request.add_header("X-Plex-Token", token)
-        with urllib.request.urlopen(request, timeout=30) as response:
-            return response.read()
+        return plex_request(method, url, token)
 
     def get_plex_machine_identifier(self, plex_url: str, token: str) -> str:
-        data = self._plex_request("GET", f"{plex_url.rstrip('/')}/", token)
-        root = ET.fromstring(data)
-        machine_id = root.attrib.get("machineIdentifier")
-        if not machine_id:
-            raise ValueError("machineIdentifier introuvable via l'API Plex")
-        return machine_id
+        return plex_machine_identifier(plex_url, token)
 
-    def find_playlist_rating_key(self, plex_url: str, token: str, playlist_name: str) -> str | None:
-        data = self._plex_request("GET", f"{plex_url.rstrip('/')}/playlists", token)
-        root = ET.fromstring(data)
-        for item in root.findall("Directory") + root.findall("Playlist"):
-            item_title = item.attrib.get("title", "")
-            playlist_type = item.attrib.get("playlistType", "")
-            if playlist_type == "audio" and item_title.lower() == playlist_name.lower():
-                rating_key = item.attrib.get("ratingKey")
-                if rating_key:
-                    return rating_key
-        return None
+    def find_playlist_rating_keys(self, plex_url: str, token: str, playlist_name: str) -> list[str]:
+        return plex_find_playlist_rating_keys(plex_url, token, playlist_name)
 
     def delete_playlist_api(self, plex_url: str, token: str, rating_key: str) -> None:
-        self._plex_request("DELETE", f"{plex_url.rstrip('/')}/playlists/{rating_key}", token)
+        plex_delete_playlist(plex_url, token, rating_key)
 
     def create_playlist_api(
         self,
@@ -583,20 +575,13 @@ class PlexPlaylistManager:
     ) -> None:
         if not track_ids:
             raise ValueError("Aucun morceau a ajouter: la playlist cible serait vide")
-
-        metadata_csv = ",".join(str(track_id) for track_id in track_ids)
-        uri_value = (
-            f"server://{machine_identifier}/com.plexapp.plugins.library/library/metadata/{metadata_csv}"
+        plex_create_audio_playlist(
+            plex_url,
+            token,
+            playlist_name,
+            track_ids,
+            machine_id=machine_identifier,
         )
-        query = urllib.parse.urlencode(
-            {
-                "type": "audio",
-                "title": playlist_name,
-                "smart": "0",
-                "uri": uri_value,
-            }
-        )
-        self._plex_request("POST", f"{plex_url.rstrip('/')}/playlists?{query}", token)
 
     def sync_playlist_via_api(
         self,
@@ -607,25 +592,29 @@ class PlexPlaylistManager:
         dry_run: bool,
     ) -> dict:
         machine_id = self.get_plex_machine_identifier(plex_url, token)
-        existing_rating_key = self.find_playlist_rating_key(plex_url, token, playlist_name)
+        existing_rating_keys = self.find_playlist_rating_keys(plex_url, token, playlist_name)
+        existing_rating_key = existing_rating_keys[0] if existing_rating_keys else None
         if dry_run:
             return {
                 "mode": "dry-run",
                 "playlist": playlist_name,
                 "existing_playlist_rating_key": existing_rating_key,
+                "existing_playlist_rating_keys": existing_rating_keys,
                 "machine_identifier": machine_id,
                 "track_count": len(track_ids),
             }
 
-        if existing_rating_key:
-            self.delete_playlist_api(plex_url, token, existing_rating_key)
+        for rating_key in existing_rating_keys:
+            self.delete_playlist_api(plex_url, token, rating_key)
 
         self.create_playlist_api(plex_url, token, machine_id, playlist_name, track_ids)
-        new_rating_key = self.find_playlist_rating_key(plex_url, token, playlist_name)
+        new_rating_keys = self.find_playlist_rating_keys(plex_url, token, playlist_name)
+        new_rating_key = new_rating_keys[0] if new_rating_keys else None
         return {
             "mode": "apply",
             "playlist": playlist_name,
             "deleted_previous_rating_key": existing_rating_key,
+            "deleted_previous_rating_keys": existing_rating_keys,
             "new_rating_key": new_rating_key,
             "machine_identifier": machine_id,
             "track_count": len(track_ids),
@@ -636,7 +625,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Gestionnaire de playlists Plex base sur une playlist seed")
     parser.add_argument("command", choices=["list", "inspect", "suggest", "cleanup-duplicates", "sync-from-seed", "api-sync-from-seed"], help="Action a executer")
     parser.add_argument("--plex-db", default=str(DEFAULT_PLEX_DB), help="Chemin vers la base Plex")
-    parser.add_argument("--plex-url", default="http://127.0.0.1:32400", help="URL Plex pour l'API (ex: http://127.0.0.1:32400)")
+    parser.add_argument("--plex-url", default=default_plex_url(), help="URL Plex pour l'API (ex: http://127.0.0.1:32400)")
     parser.add_argument("--plex-token", help="Token API Plex (X-Plex-Token)")
     parser.add_argument("--playlist", help="Nom de la playlist a inspecter ou synchroniser")
     parser.add_argument("--profile", choices=sorted(PLAYLIST_PROFILES.keys()), help="Profil de suggestion preconfigure")

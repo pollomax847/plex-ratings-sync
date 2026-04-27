@@ -11,6 +11,9 @@ Pillow>=10.0
 # --- Édition de tags audio (mutagen) ----------------------------------------
 mutagen>=1.47
 
+# --- Classement bibliothèque audio (beets CLI) ------------------------------
+beets>=2.2
+
 # --- Dépendance externe: songrec (binaire) ----------------------------------
 # Installé séparément sur l'hôte et bind-monté dans le container via
 # docker-compose.yml. Pas un package pip.

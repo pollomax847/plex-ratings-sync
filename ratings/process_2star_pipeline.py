@@ -22,10 +22,12 @@ import subprocess
 import shutil
 import json
 import re
+import difflib
 from pathlib import Path
 import urllib.request
 import urllib.parse
 import xml.etree.ElementTree as ET
+from typing import Any
 
 from mutagen import File as MutagenFile
 
@@ -61,6 +63,35 @@ def _candidate_mappings() -> list[tuple[str, str]]:
     return pairs
 
 
+def _normalized_name(value: str) -> str:
+    value = re.sub(r"[^a-z0-9]+", " ", value.lower())
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def _find_nearby_renamed_file(path: Path) -> str | None:
+    parent = path.parent
+    if not parent.is_dir():
+        return None
+
+    expected = _normalized_name(path.stem)
+    if not expected:
+        return None
+
+    candidates = [child for child in parent.iterdir() if child.is_file() and child.suffix == path.suffix]
+    if not candidates:
+        return None
+
+    scored: list[tuple[float, Path]] = []
+    for child in candidates:
+        score = difflib.SequenceMatcher(None, expected, _normalized_name(child.stem)).ratio()
+        scored.append((score, child))
+
+    best_score, best_path = max(scored, key=lambda item: item[0])
+    if best_score >= 0.45:
+        return str(best_path)
+    return None
+
+
 def _resolve_file_path(original: str) -> tuple[str, str]:
     """Résout un chemin de track Plex vers un fichier réellement accessible.
 
@@ -72,6 +103,9 @@ def _resolve_file_path(original: str) -> tuple[str, str]:
     p = Path(original)
     if p.exists():
         return original, "as-is"
+    nearby = _find_nearby_renamed_file(p)
+    if nearby:
+        return nearby, "same-dir-similar"
 
     # 1) mappings explicites / connus
     for src, dst in _candidate_mappings():
@@ -79,6 +113,9 @@ def _resolve_file_path(original: str) -> tuple[str, str]:
             cand = original.replace(src, dst, 1)
             if Path(cand).exists():
                 return cand, f"mapped:{src}->{dst}"
+            nearby = _find_nearby_renamed_file(Path(cand))
+            if nearby:
+                return nearby, f"mapped-similar:{src}->{dst}"
 
     # 2) heuristiques Plex/iTunes usuelles
     heuristics: list[str] = []
@@ -92,6 +129,9 @@ def _resolve_file_path(original: str) -> tuple[str, str]:
     for cand in heuristics:
         if Path(cand).exists():
             return cand, "heuristic"
+        nearby = _find_nearby_renamed_file(Path(cand))
+        if nearby:
+            return nearby, "heuristic-similar"
 
     # 3) fallback par nom de fichier dans les volumes montés (plus coûteux)
     name = Path(original).name
@@ -206,10 +246,37 @@ def clear_rating(rating_key: str) -> bool:
 
 # ─── étapes du pipeline ──────────────────────────────────────────────────────
 
-def run_songrec(file_path: str, dry_run: bool) -> bool:
+def _snapshot_sibling_names(file_path: str) -> set[str]:
+    path = Path(file_path)
+    parent = path.parent
+    if not parent.is_dir():
+        return set()
+    return {child.name for child in parent.iterdir() if child.is_file() and child.suffix == path.suffix}
+
+
+def _resolve_post_songrec_path(file_path: str, before_names: set[str]) -> str:
+    path = Path(file_path)
+    if path.exists():
+        return str(path)
+
+    parent = path.parent
+    if not parent.is_dir():
+        return file_path
+
+    current = [child for child in parent.iterdir() if child.is_file() and child.suffix == path.suffix]
+    new_files = [child for child in current if child.name not in before_names]
+    if len(new_files) == 1:
+        return str(new_files[0])
+    if current:
+        newest = max(current, key=lambda child: child.stat().st_mtime)
+        return str(newest)
+    return file_path
+
+def run_songrec(file_path: str, dry_run: bool, timeout_s: int) -> tuple[bool, str]:
     """Lance songrec-rename si disponible, sinon fallback songrec + tags/rename simple."""
     songrec_rename_bin = shutil.which("songrec-rename")
     songrec_bin = shutil.which("songrec")
+    before_names = _snapshot_sibling_names(file_path)
 
     if dry_run:
         if songrec_rename_bin:
@@ -219,22 +286,30 @@ def run_songrec(file_path: str, dry_run: bool) -> bool:
             print("  [sim] fallback: mise à jour tags (artist/title) + renommage simple")
         else:
             print("  [sim] ❌ ni songrec-rename ni songrec n'est disponible")
-        return True
+        return True, file_path
 
     if songrec_rename_bin:
         cmd = [songrec_rename_bin, "-i", file_path]
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_s)
             if result.stdout:
                 for line in result.stdout.strip().splitlines():
                     print(f"    {line}")
             if result.stderr:
                 for line in result.stderr.strip().splitlines():
                     print(f"    ⚠️  {line}")
-            return result.returncode == 0
+            if result.returncode == 0:
+                return True, _resolve_post_songrec_path(file_path, before_names)
+            if songrec_bin:
+                print("  ⚠️  songrec-rename a échoué, tentative de fallback songrec…")
+            else:
+                return False, file_path
         except subprocess.TimeoutExpired:
-            print("  ❌ Timeout songrec-rename (>120s)", file=sys.stderr)
-            return False
+            print(f"  ❌ Timeout songrec-rename (>{timeout_s}s)", file=sys.stderr)
+            if songrec_bin:
+                print("  ⚠️  tentative de fallback songrec après timeout…")
+            else:
+                return False, file_path
 
     if not songrec_bin:
         print(
@@ -242,46 +317,50 @@ def run_songrec(file_path: str, dry_run: bool) -> bool:
             "(vérifiez les montages SONGREC_* dans docker-compose/.env)",
             file=sys.stderr,
         )
-        return False
+        return False, file_path
 
     # Fallback: reconnaissance + tags/rename basique sans dépendre de songrec-rename.
     cmd = [songrec_bin, "audio-file-to-recognized-song", file_path]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_s)
         if result.returncode != 0:
             if result.stderr:
                 for line in result.stderr.strip().splitlines():
                     print(f"    ⚠️  {line}")
-            return False
+            return False, file_path
 
         payload = (result.stdout or "").strip()
         if not payload:
             print("  ⚠️  songrec n'a renvoyé aucune sortie exploitable")
-            return False
+            return False, file_path
 
         try:
             data = json.loads(payload)
         except json.JSONDecodeError:
             print("  ⚠️  sortie songrec non JSON, impossible de mettre à jour tags")
-            return False
+            return False, file_path
 
         track = data.get("track") or {}
         title = (track.get("title") or "").strip()
         artist = (track.get("subtitle") or "").strip()
         if not title and not artist:
             print("  ⚠️  songrec n'a pas identifié de métadonnées utiles")
-            return False
+            return False, file_path
 
         audio = MutagenFile(file_path, easy=True)
         if audio is None:
             print("  ⚠️  fichier reconnu mais format de tags non supporté par mutagen")
-            return False
+            return False, file_path
 
         if title:
             audio["title"] = [title]
         if artist:
             audio["artist"] = [artist]
-        audio.save()
+        try:
+            audio.save()
+        except Exception as exc:
+            print(f"  ⚠️  échec écriture tags mutagen: {exc}")
+            return False, file_path
         print("    ✅ Tags mis à jour (fallback songrec)")
 
         # Renommage simple: <Artist> - <Title>.<ext>
@@ -296,22 +375,31 @@ def run_songrec(file_path: str, dry_run: bool) -> bool:
             if new_path != src_path and not new_path.exists():
                 src_path.rename(new_path)
                 print(f"    ✅ Renommé: {new_path.name}")
+                file_path = str(new_path)
 
-        return True
+        return True, _resolve_post_songrec_path(file_path, before_names)
     except subprocess.TimeoutExpired:
-        print("  ❌ Timeout songrec (>120s)", file=sys.stderr)
-        return False
+        print(f"  ❌ Timeout songrec (>{timeout_s}s)", file=sys.stderr)
+        return False, file_path
+    except Exception as exc:
+        print(f"  ⚠️  erreur songrec fallback inattendue: {exc}", file=sys.stderr)
+        return False, file_path
 
 
-def run_beet(file_path: str, dry_run: bool) -> bool:
+def run_beet(file_path: str, dry_run: bool, beet_bin: str | None = None, timeout_s: int = 300) -> bool:
     """Lance `beet import -q <fichier>`. Retourne True si succès."""
     if dry_run:
         print(f"  [sim] beet import -q '{file_path}'")
         return True
+    beet_cmd = beet_bin or shutil.which("beet")
+    if not beet_cmd:
+        print("  ❌ beet introuvable — installez-le avec : pip install beets",
+              file=sys.stderr)
+        return False
     # -q = quiet (non-interactif), utilise les réglages du config.yaml
-    cmd = ["beet", "import", "-q", file_path]
+    cmd = [beet_cmd, "import", "-q", file_path]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_s)
         if result.stdout:
             for line in result.stdout.strip().splitlines():
                 print(f"    {line}")
@@ -319,12 +407,8 @@ def run_beet(file_path: str, dry_run: bool) -> bool:
             for line in result.stderr.strip().splitlines():
                 print(f"    ⚠️  {line}")
         return result.returncode == 0
-    except FileNotFoundError:
-        print("  ❌ beet introuvable — installez-le avec : pip install beets",
-              file=sys.stderr)
-        return False
     except subprocess.TimeoutExpired:
-        print("  ❌ Timeout beet import (>300s)", file=sys.stderr)
+        print(f"  ❌ Timeout beet import (>{timeout_s}s)", file=sys.stderr)
         return False
 
 
@@ -340,11 +424,26 @@ def main() -> None:
                         help="Sauter l'étape beet import")
     parser.add_argument("--no-clear", action="store_true",
                         help="Ne pas effacer le rating 2★ après traitement")
+    parser.add_argument("--songrec-timeout", type=int, default=int(os.environ.get("SONGREC_TIMEOUT", "120")),
+                        help="Timeout en secondes pour songrec-rename/songrec")
+    parser.add_argument("--beet-timeout", type=int, default=int(os.environ.get("BEET_TIMEOUT", "300")),
+                        help="Timeout en secondes pour beet import")
+    parser.add_argument("--summary-json", default=os.environ.get("PIPELINE_2STAR_SUMMARY_JSON", ""),
+                        help="Chemin optionnel pour écrire un résumé JSON des échecs et résultats")
     args = parser.parse_args()
+
+    args.songrec_timeout = max(1, int(args.songrec_timeout))
+    args.beet_timeout = max(1, int(args.beet_timeout))
 
     if not PLEX_TOKEN:
         print("❌ PLEX_TOKEN non défini (variable d'environnement manquante)", file=sys.stderr)
         sys.exit(1)
+
+    beet_bin = None if args.no_beet else shutil.which("beet")
+    if not args.no_beet and not args.dry_run and not beet_bin:
+        print("⚠️  beet introuvable au démarrage — étape beet désactivée pour tout ce run", file=sys.stderr)
+        print("   Installez-le avec : pip install beets", file=sys.stderr)
+        args.no_beet = True
 
     mode = "SIMULATION" if args.dry_run else "RÉEL"
     print(f"🎵 Pipeline 2★ Plex [{mode}]")
@@ -380,6 +479,17 @@ def main() -> None:
     ok = 0
     errors = 0
     skipped = 0
+    failures: list[dict[str, Any]] = []
+
+    def add_failure(track: dict[str, Any], stage: str, reason: str, file_path: str | None) -> None:
+        failures.append({
+            "rating_key": track.get("ratingKey", ""),
+            "artist": track.get("artist", ""),
+            "title": track.get("title", ""),
+            "file": file_path or "",
+            "stage": stage,
+            "reason": reason,
+        })
 
     for i, track in enumerate(all_tracks, 1):
         title  = track["title"]
@@ -393,6 +503,7 @@ def main() -> None:
         else:
             print("  ⚠️  Chemin de fichier introuvable, passage en skip")
             skipped += 1
+            add_failure(track, "resolve", "missing-file-path", fpath)
             continue
 
         resolved, source = _resolve_file_path(fpath)
@@ -404,23 +515,29 @@ def main() -> None:
         if not args.dry_run and not os.path.exists(fpath):
             print(f"  ⚠️  Fichier absent sur disque : {fpath}")
             skipped += 1
+            add_failure(track, "resolve", "file-not-found", fpath)
             continue
 
         # Étape 1 : songrec-rename -i
         print("  🎵 songrec-rename -i …")
-        songrec_ok = run_songrec(fpath, args.dry_run)
+        songrec_ok, processed_path = run_songrec(fpath, args.dry_run, args.songrec_timeout)
         if not songrec_ok:
             print("  ❌ songrec-rename a échoué — track ignoré pour beet/clear")
             errors += 1
+            add_failure(track, "songrec", "songrec-failed", fpath)
             continue
+        if processed_path != fpath:
+            print(f"  📦 Fichier traité: {processed_path}")
+            fpath = processed_path
 
         # Étape 2 : beet import
         if not args.no_beet:
             print("  📚 beet import -q …")
-            beet_ok = run_beet(fpath, args.dry_run)
+            beet_ok = run_beet(fpath, args.dry_run, beet_bin=beet_bin, timeout_s=args.beet_timeout)
             if not beet_ok:
                 print("  ⚠️  beet import a échoué — rating NON effacé (traitement manuel requis)")
                 errors += 1
+                add_failure(track, "beet", "beet-import-failed", fpath)
                 continue
 
         # Étape 3 : effacement du rating 2★
@@ -434,6 +551,7 @@ def main() -> None:
                 else:
                     print("  ⚠️  Impossible d'effacer le rating via API")
                     errors += 1
+                    add_failure(track, "clear", "clear-rating-failed", fpath)
                     continue
 
         print("  ✅ OK")
@@ -445,6 +563,36 @@ def main() -> None:
     print(f"   ✅ Traités avec succès : {ok}")
     print(f"   ❌ Erreurs             : {errors}")
     print(f"   ⏭️  Ignorés (pas de fichier) : {skipped}")
+    print(f"   ⏱️  Timeout songrec    : {args.songrec_timeout}s")
+    print(f"   ⏱️  Timeout beet       : {args.beet_timeout}s")
+
+    if failures:
+        print("\n🧾 Résumé des échecs")
+        for failure in failures:
+            print(
+                "   - {artist} — {title} [{stage}] {reason}".format(
+                    artist=failure["artist"] or "?",
+                    title=failure["title"] or "?",
+                    stage=failure["stage"],
+                    reason=failure["reason"],
+                )
+            )
+
+    if args.summary_json:
+        summary_path = Path(args.summary_json)
+        summary_path.parent.mkdir(parents=True, exist_ok=True)
+        summary_payload = {
+            "mode": mode,
+            "plex_url": PLEX_URL,
+            "songrec_timeout": args.songrec_timeout,
+            "beet_timeout": args.beet_timeout,
+            "ok": ok,
+            "errors": errors,
+            "skipped": skipped,
+            "failures": failures,
+        }
+        summary_path.write_text(json.dumps(summary_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"\n💾 Résumé JSON écrit : {summary_path}")
 
 
 if __name__ == "__main__":

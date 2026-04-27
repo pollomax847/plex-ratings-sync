@@ -35,6 +35,7 @@ import os
 import re
 import secrets
 import shlex
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -95,13 +96,22 @@ except Exception as exc:  # pragma: no cover
     _auto_pl_err = repr(exc)
 else:
     _auto_pl_err = None
+    
+from plex_api import (
+    default_plex_url as shared_default_plex_url,
+    plex_create_audio_playlist as shared_plex_create_audio_playlist,
+    plex_delete_playlist as shared_plex_delete_playlist,
+    plex_find_playlist_rating_key as shared_plex_find_playlist_rating_key,
+    plex_get_playlist_track_ids as shared_plex_get_playlist_track_ids,
+    plex_list_audio_playlists as shared_plex_list_audio_playlists,
+    plex_machine_identifier as shared_plex_machine_identifier,
+    plex_request as shared_plex_request,
+)
 
 
 def _default_plex_url() -> str:
-    """Retourne l'URL Plex par défaut selon le contexte (Docker vs host)."""
-    if Path("/.dockerenv").is_file():
-        return "http://host.docker.internal:32400"
-    return "http://localhost:32400"
+    """Retourne l'URL Plex par défaut selon le contexte (Docker vs host)."""    
+    return shared_default_plex_url()
 
 
 def _new_log_buffer() -> deque[str]:
@@ -494,6 +504,15 @@ def _path_snapshot(path_str: str) -> dict[str, Any]:
     return info
 
 
+def _tool_snapshot(command: str) -> dict[str, Any]:
+    resolved = shutil.which(command)
+    return {
+        "command": command,
+        "available": bool(resolved),
+        "path": resolved or "",
+    }
+
+
 def _scan_plex_preferences() -> dict[str, Any]:
     # Si le token est déjà injecté via variable d'environnement, on l'utilise directement
     env_token = os.environ.get("PLEX_TOKEN", "").strip()
@@ -669,6 +688,8 @@ def config_page():
         {"label": "Mode d'exécution", "value": "Docker" if Path("/.dockerenv").exists() else "Host", "secret": False},
         {"label": "PLEX_URL", "value": os.environ.get("PLEX_URL", ""), "secret": False},
         {"label": "PLEX_TOKEN", "value": _mask_secret(os.environ.get("PLEX_TOKEN", "")), "secret": True},
+        {"label": "SLSKD_URL", "value": os.environ.get("SLSKD_URL", ""), "secret": False},
+        {"label": "SLSKD_API_KEY", "value": _mask_secret(os.environ.get("SLSKD_API_KEY", "")), "secret": True},
         {"label": "AUDIO_LIBRARY", "value": os.environ.get("AUDIO_LIBRARY", "/music"), "secret": False},
         {"label": "PLAYLISTS_DIR", "value": os.environ.get("PLAYLISTS_DIR", "/playlists"), "secret": False},
         {"label": "LOGS_DIR", "value": str(LOGS_DIR), "secret": False},
@@ -682,10 +703,17 @@ def config_page():
         _path_snapshot(os.environ.get("PLAYLISTS_DIR", "/playlists")),
         _path_snapshot(str(LOGS_DIR)),
     ]
+    tools = [
+        _tool_snapshot("python3"),
+        _tool_snapshot("beet"),
+        _tool_snapshot("songrec"),
+        _tool_snapshot("songrec-rename"),
+    ]
     return render_template(
         "config.html",
         config_rows=config_rows,
         mounts=mounts,
+        tools=tools,
         plex_detect=_scan_plex_preferences(),
     )
 
@@ -730,7 +758,28 @@ def playlists_page():
         "deleted": str(request.args.get("deleted") or "").strip(),
         "error": str(request.args.get("delete_error") or "").strip(),
     }
-    return render_template("playlists.html", defaults=defaults, delete_status=status)
+    pipeline_tools = [
+        _tool_snapshot("beet"),
+        _tool_snapshot("songrec"),
+        _tool_snapshot("songrec-rename"),
+    ]
+    pipeline_job_keys = {
+        "ratings_2star_pipeline",
+        "ratings_2star_pipeline_sim",
+        "ratings_2star_songrec_only",
+        "ratings_clear_2stars",
+    }
+    pipeline_runs = [r for r in runner.list_runs() if r.job_key in pipeline_job_keys]
+    active_pipeline_run = next((r for r in pipeline_runs if r.status == "running"), None)
+    latest_pipeline_run = active_pipeline_run or (pipeline_runs[0] if pipeline_runs else None)
+    pipeline_status = _summarize_run(latest_pipeline_run) if latest_pipeline_run else None
+    return render_template(
+        "playlists.html",
+        defaults=defaults,
+        delete_status=status,
+        pipeline_tools=pipeline_tools,
+        pipeline_status=pipeline_status,
+    )
 
 
 @app.route("/logs")
@@ -1112,52 +1161,23 @@ def api_pl_plex_tracks():
 
 
 def _plex_delete_playlist(url: str, token: str, rating_key: str) -> None:
-    req = urllib.request.Request(
-        url=f"{url.rstrip('/')}/playlists/{rating_key}",
-        method="DELETE",
-    )
-    req.add_header("X-Plex-Token", token)
-    with urllib.request.urlopen(req, timeout=30):
-        return
+    shared_plex_delete_playlist(url, token, rating_key)
 
 
 def _plex_request(method: str, url: str, token: str) -> bytes:
-    req = urllib.request.Request(url=url, method=method)
-    req.add_header("X-Plex-Token", token)
-    with urllib.request.urlopen(req, timeout=30) as response:
-        return response.read()
+    return shared_plex_request(method, url, token)
 
 
 def _plex_machine_identifier(url: str, token: str) -> str:
-    root = ET.fromstring(_plex_request("GET", f"{url.rstrip('/')}/", token))
-    machine_id = root.attrib.get("machineIdentifier")
-    if not machine_id:
-        raise RuntimeError("machineIdentifier introuvable")
-    return machine_id
+    return shared_plex_machine_identifier(url, token)
 
 
 def _plex_find_playlist_rating_key(url: str, token: str, title: str) -> str | None:
-    root = ET.fromstring(_plex_request("GET", f"{url.rstrip('/')}/playlists", token))
-    for item in root.findall("Playlist") + root.findall("Directory"):
-        if item.attrib.get("playlistType") != "audio":
-            continue
-        if item.attrib.get("title", "").strip().casefold() == title.strip().casefold():
-            return item.attrib.get("ratingKey")
-    return None
+    return shared_plex_find_playlist_rating_key(url, token, title)
 
 
 def _plex_list_audio_playlists(url: str, token: str) -> list[dict[str, str]]:
-    root = ET.fromstring(_plex_request("GET", f"{url.rstrip('/')}/playlists", token))
-    out: list[dict[str, str]] = []
-    for item in root.findall("Playlist") + root.findall("Directory"):
-        if item.attrib.get("playlistType") != "audio":
-            continue
-        title = str(item.attrib.get("title") or "").strip()
-        rating_key = str(item.attrib.get("ratingKey") or "").strip()
-        if not title or not rating_key:
-            continue
-        out.append({"title": title, "rating_key": rating_key})
-    return out
+    return shared_plex_list_audio_playlists(url, token)
 
 
 def _playlist_name_aliases(name: str) -> set[str]:
@@ -1223,29 +1243,13 @@ def _plex_delete_matching_audio_playlists(url: str, token: str, candidate_names:
 
 
 def _plex_create_audio_playlist(url: str, token: str, title: str, track_ids: list[int], replace: bool) -> None:
-    if replace:
-        existing = _plex_find_playlist_rating_key(url, token, title)
-        if existing:
-            _plex_delete_playlist(url, token, existing)
-
     if not track_ids:
         raise RuntimeError("Aucune piste matchée pour créer la playlist")
-
-    machine_id = _plex_machine_identifier(url, token)
-    metadata_csv = ",".join(str(i) for i in track_ids)
-    uri = f"server://{machine_id}/com.plexapp.plugins.library/library/metadata/{metadata_csv}"
-    query = urllib.parse.urlencode({"type": "audio", "title": title, "smart": "0", "uri": uri})
-    _plex_request("POST", f"{url.rstrip('/')}/playlists?{query}", token)
+    shared_plex_create_audio_playlist(url, token, title, track_ids, replace=replace)
 
 
 def _plex_get_playlist_track_ids(url: str, token: str, rating_key: str) -> list[int]:
-    root = ET.fromstring(_plex_request("GET", f"{url.rstrip('/')}/playlists/{rating_key}/items", token))
-    ids: list[int] = []
-    for item in root.findall("Track") + root.findall("Video") + root.findall("Photo") + root.findall("Metadata"):
-        rk = item.attrib.get("ratingKey", "")
-        if rk.isdigit():
-            ids.append(int(rk))
-    return ids
+    return shared_plex_get_playlist_track_ids(url, token, rating_key)
 
 
 def _normalize_row_keys(row: dict[str, Any]) -> dict[str, Any]:
@@ -1800,14 +1804,46 @@ CUSTOM_PLAYLISTS_CONFIG = Path(os.environ.get(
     str(PROJECT_ROOT / "playlists" / "custom_auto_playlists.json"),
 ))
 
+LASTFM_BUILTIN_PLAYLISTS = [
+    {
+        "name": "📈 Last.fm Top écoutes",
+        "source": "lastfm",
+        "description": "Top 10% des titres les plus écoutés sur Last.fm.",
+        "requires_lastfm": True,
+    },
+    {
+        "name": "🔥 Last.fm Rotation forte",
+        "source": "lastfm",
+        "description": "Titres dans la tranche d'écoute 75-90 percentile.",
+        "requires_lastfm": True,
+    },
+    {
+        "name": "🌊 Last.fm Rotation moyenne",
+        "source": "lastfm",
+        "description": "Titres dans la tranche d'écoute 50-75 percentile.",
+        "requires_lastfm": True,
+    },
+    {
+        "name": "🌱 Last.fm À pousser",
+        "source": "lastfm",
+        "description": "Titres moins écoutés mais bien notés à remettre en avant.",
+        "requires_lastfm": True,
+    },
+]
+
 
 @app.get("/api/playlists/custom/rules")
 def api_custom_rules_get():
     """Retourne les règles personnalisées (playlists_custom.json)."""
     if not CUSTOM_PLAYLISTS_CONFIG.is_file():
-        return jsonify({"playlists": [], "path": str(CUSTOM_PLAYLISTS_CONFIG)})
+        return jsonify({
+            "playlists": [],
+            "builtin_playlists": LASTFM_BUILTIN_PLAYLISTS,
+            "path": str(CUSTOM_PLAYLISTS_CONFIG),
+        })
     try:
         raw = json.loads(CUSTOM_PLAYLISTS_CONFIG.read_text(encoding="utf-8"))
+        raw["builtin_playlists"] = LASTFM_BUILTIN_PLAYLISTS
         raw["path"] = str(CUSTOM_PLAYLISTS_CONFIG)
         return jsonify(raw)
     except Exception as exc:

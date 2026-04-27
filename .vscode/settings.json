@@ -98,6 +98,10 @@
         "/^cd /home/paulceline/scripts && python3 playlists/import_csv_to_plex\\.py \\\\\n  --csv \"/mnt/MyBook/itunes/Mojito Sunset\\.csv\" \\\\\n  --playlist \"🍹 Mojito sunset\" \\\\\n  --plex-url http://localhost:32400 \\\\\n  --plex-token WQQySxr3SBPY-Sn77Yuk \\\\\n  --dry-run 2>&1 \\| tail -40$/": {
             "approve": true,
             "matchCommandLine": true
+        },
+        "/^docker compose run --rm scripts run python3 ratings/process_2star_pipeline\\.py --songrec-timeout 180 --beet-timeout 600 --summary-json /data/logs/pipeline_2star_summary_20260427_\\$\\(date \\+%H%M%S\\)\\.json$/": {
+            "approve": true,
+            "matchCommandLine": true
         }
     }
 }

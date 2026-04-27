@@ -17,13 +17,23 @@ import sqlite3
 import tempfile
 import shutil
 import hashlib
-import unicodedata
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
+
+from plex_api import (
+    default_plex_url,
+    plex_create_audio_playlist,
+    plex_delete_playlist,
+    plex_find_playlist_rating_keys,
+    plex_machine_identifier,
+    plex_request,
+)
+from playlist_detector import parse_playlist as parse_detected_playlist
+from text_normalization import normalize_ascii, normalize_unicode as shared_normalize_unicode
 
 DEFAULT_PLEX_DB = Path(
     os.environ.get(
@@ -79,99 +89,37 @@ class ItunesImportResult:
     details: list = field(default_factory=list)  # list of (name, matched, total)
 
 
-def plex_request(method: str, url: str, token: str) -> bytes:
-    req = urllib.request.Request(url=url, method=method)
-    req.add_header("X-Plex-Token", token)
-    with urllib.request.urlopen(req, timeout=30) as response:
-        return response.read()
-
-
 def get_machine_identifier(plex_url: str, token: str) -> str:
-    root = ET.fromstring(plex_request("GET", f"{plex_url.rstrip('/')}/", token))
-    machine_id = root.attrib.get("machineIdentifier")
-    if not machine_id:
-        raise RuntimeError("machineIdentifier not found in Plex API response")
-    return machine_id
+    return plex_machine_identifier(plex_url, token)
 
 
-def find_audio_playlist_rating_key(plex_url: str, token: str, title: str) -> str | None:
-    root = ET.fromstring(plex_request("GET", f"{plex_url.rstrip('/')}/playlists", token))
-    for item in root.findall("Playlist") + root.findall("Directory"):
-        if item.attrib.get("playlistType") == "audio" and item.attrib.get("title", "").lower() == title.lower():
-            return item.attrib.get("ratingKey")
-    return None
+def find_audio_playlist_rating_keys(plex_url: str, token: str, title: str) -> list[str]:
+    return plex_find_playlist_rating_keys(plex_url, token, title)
 
 
 def delete_playlist(plex_url: str, token: str, rating_key: str) -> None:
-    plex_request("DELETE", f"{plex_url.rstrip('/')}/playlists/{rating_key}", token)
+    plex_delete_playlist(plex_url, token, rating_key)
 
 
 def create_playlist(plex_url: str, token: str, machine_id: str, title: str, track_ids: list[int]) -> None:
     if not track_ids:
         return
-
-    # Create with first track, then append remaining tracks in bounded batches
-    # to avoid HTTP 400 caused by oversized query strings.
-    first_uri = f"server://{machine_id}/com.plexapp.plugins.library/library/metadata/{track_ids[0]}"
-    create_query = urllib.parse.urlencode({"type": "audio", "title": title, "smart": "0", "uri": first_uri})
-    created = ET.fromstring(plex_request("POST", f"{plex_url.rstrip('/')}/playlists?{create_query}", token))
-
-    playlist_node = created.find("Playlist") or created.find("Directory")
-    playlist_rating_key = playlist_node.attrib.get("ratingKey") if playlist_node is not None else None
-    if not playlist_rating_key:
-        raise RuntimeError(f"Playlist created but ratingKey missing for: {title}")
-
-    batch_size = 200
-    remaining = track_ids[1:]
-    for idx in range(0, len(remaining), batch_size):
-        batch_ids = remaining[idx:idx + batch_size]
-        metadata_csv = ",".join(str(i) for i in batch_ids)
-        uri = f"server://{machine_id}/com.plexapp.plugins.library/library/metadata/{metadata_csv}"
-        batch_query = urllib.parse.urlencode({"uri": uri})
-        plex_request("PUT", f"{plex_url.rstrip('/')}/playlists/{playlist_rating_key}/items?{batch_query}", token)
+    plex_create_audio_playlist(plex_url, token, title, track_ids, machine_id=machine_id)
 
 
 def parse_m3u_file(path: Path) -> list[str]:
-    entries: list[str] = []
-    for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
-        value = line.strip()
-        if not value or value.startswith("#"):
-            continue
-        entries.append(value)
-    return entries
+    parsed = parse_detected_playlist(path)
+    return [entry.path_or_uri for entry in parsed.entries if entry.path_or_uri]
 
 
 def parse_pls_file(path: Path) -> list[str]:
-    parser = configparser.ConfigParser(strict=False)
-    loaded = False
-    for encoding in ("utf-8", "latin-1"):
-        try:
-            parser.read(path, encoding=encoding)
-            loaded = True
-            break
-        except UnicodeDecodeError:
-            continue
-    if not loaded:
-        return []
-    entries: list[str] = []
-    if parser.has_section("playlist"):
-        for key, value in parser.items("playlist"):
-            if key.lower().startswith("file") and value:
-                entries.append(value.strip())
-    return entries
+    parsed = parse_detected_playlist(path)
+    return [entry.path_or_uri for entry in parsed.entries if entry.path_or_uri]
 
 
 def parse_xspf_file(path: Path) -> list[str]:
-    try:
-        tree = ET.parse(path)
-    except ET.ParseError:
-        return []
-
-    entries: list[str] = []
-    for elem in tree.iter():
-        if elem.tag.endswith("location") and elem.text:
-            entries.append(elem.text.strip())
-    return entries
+    parsed = parse_detected_playlist(path)
+    return [entry.path_or_uri for entry in parsed.entries if entry.path_or_uri]
 
 
 def parse_playlist_file(path: Path) -> list[str]:
@@ -893,14 +841,12 @@ def prepare_temp_db(db_path: Path) -> Path:
 
 def normalize(s: str) -> str:
     """Normalize a string for fuzzy matching: NFKD→ASCII, lowercase, alphanum only."""
-    s = unicodedata.normalize("NFKD", s or "").encode("ascii", "ignore").decode().lower()
-    return re.sub(r"[^a-z0-9]", "", s)
+    return normalize_ascii(s)
 
 
 def normalize_unicode(s: str) -> str:
     """Normalize keeping unicode chars: lowercase, strip punctuation (for non-Latin languages)."""
-    s = (s or "").lower()
-    return re.sub(r"[^\w\d]", "", s, flags=re.UNICODE)
+    return shared_normalize_unicode(s)
 
 
 def parse_itunes_xml(xml_path: Path) -> tuple[dict, list[dict]]:
@@ -1206,11 +1152,12 @@ def import_itunes_xml_to_plex(
 
                 if apply_changes:
                     unique_ids = list(dict.fromkeys(plex_track_ids))
-                    existing_key = find_audio_playlist_rating_key(plex_url, token, name)
-                    if existing_key and replace_existing:
-                        delete_playlist(plex_url, token, existing_key)
-                        existing_key = None
-                    if not existing_key:
+                    existing_keys = find_audio_playlist_rating_keys(plex_url, token, name)
+                    if existing_keys and replace_existing:
+                        for existing_key in existing_keys:
+                            delete_playlist(plex_url, token, existing_key)
+                        existing_keys = []
+                    if not existing_keys:
                         create_playlist(plex_url, token, machine_id, name, unique_ids)
     finally:
         if temp_db.exists():
@@ -1223,7 +1170,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Import iTunes/music playlist files into Plex")
     parser.add_argument("--source-dir", default="/mnt/MyBook/itunes/Music", help="Root directory to scan for playlist files")
     parser.add_argument("--plex-db", default=str(DEFAULT_PLEX_DB), help="Path to Plex SQLite database")
-    parser.add_argument("--plex-url", default="http://127.0.0.1:32400", help="Plex URL")
+    parser.add_argument("--plex-url", default=default_plex_url(), help="Plex URL")
     parser.add_argument("--plex-token", help="X-Plex-Token")
     parser.add_argument("--limit-files", type=int, default=0, help="Limit number of playlist files processed (0 = all)")
     parser.add_argument("--max-depth", type=int, default=8, help="Maximum directory depth to scan under source-dir (0 = unlimited)")
@@ -1483,10 +1430,12 @@ def main() -> int:
                 )
 
                 if args.apply and track_ids:
-                    existing = find_audio_playlist_rating_key(args.plex_url, args.plex_token, playlist_name)
-                    if existing and args.replace:
-                        delete_playlist(args.plex_url, args.plex_token, existing)
-                    if (not existing) or args.replace:
+                    existing_keys = find_audio_playlist_rating_keys(args.plex_url, args.plex_token, playlist_name)
+                    if existing_keys and args.replace:
+                        for existing in existing_keys:
+                            delete_playlist(args.plex_url, args.plex_token, existing)
+                        existing_keys = []
+                    if (not existing_keys) or args.replace:
                         try:
                             create_playlist(args.plex_url, args.plex_token, machine_id, playlist_name, track_ids)
                         except Exception as exc:

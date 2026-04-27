@@ -22,6 +22,47 @@
 {% endif %}
 {% if not pld_available %}<p class="err">Module detector indisponible : {{ pld_err }}</p>{% endif %}
 
+<section class="surface section-block stack">
+  <div class="section-head">
+    <div>
+      <h2>🎵 Pipeline 2★</h2>
+      <p class="muted">songrec-rename → beet import → effacement du rating Plex, directement depuis l'UI.</p>
+    </div>
+    <span class="section-meta">Ratings</span>
+  </div>
+  <div class="result-list compact-result-list">
+    {% for tool in pipeline_tools %}
+    <article class="result-list-item">
+      <strong>{{ tool.command }}</strong>
+      <span class="table-subline">{{ tool.path if tool.path else 'introuvable dans le conteneur webui' }}</span>
+      <span class="pill {% if tool.available %}success{% else %}failed{% endif %}">{{ 'ok' if tool.available else 'missing' }}</span>
+    </article>
+    {% endfor %}
+  </div>
+  {% if pipeline_status %}
+  <div class="notice {% if pipeline_status.status == 'running' %}notice-info{% elif pipeline_status.status == 'success' %}notice-ok{% else %}notice-warn{% endif %} compact-notice">
+    <strong>Dernier run</strong>
+    <span>
+      {{ pipeline_status.title or pipeline_status.job_key }} · {{ pipeline_status.status }}
+      {% if pipeline_status.duration is not none %}· {{ pipeline_status.duration }}s{% endif %}
+      {% if pipeline_status.run_id %}· <a href="{{ url_for('job_page', run_id=pipeline_status.run_id) }}">voir le job</a>{% endif %}
+    </span>
+  </div>
+  {% else %}
+  <div class="notice compact-notice">
+    <strong>Aucun run 2★ récent</strong>
+    <span>Lance un job ci-dessous pour suivre le pipeline depuis cette page.</span>
+  </div>
+  {% endif %}
+  <div class="inline-actions top-gap">
+    <button class="btn" onclick="runPipelineJob('ratings_2star_pipeline')">▶ Lancer le pipeline réel</button>
+    <button class="btn ghost" onclick="runPipelineJob('ratings_2star_pipeline_sim')">🔎 Simulation</button>
+    <button class="btn secondary" onclick="runPipelineJob('ratings_2star_songrec_only')">🎤 Songrec uniquement</button>
+    <button class="btn ghost" onclick="runPipelineJob('ratings_clear_2stars')">🧹 Effacer 2★</button>
+  </div>
+  <div id="pipeline-2star-out" class="muted tiny-gap"></div>
+</section>
+
 <div class="tabs">
   <button data-tab="plex" onclick="tab('plex')" class="tab-btn active">Plex</button>
   <button data-tab="import" onclick="tab('import')" class="tab-btn">Import</button>
@@ -459,10 +500,11 @@ Billie Jean,Michael Jackson,Thriller</pre>
 </section>
 
 <script id="playlists-defaults" type="application/json">{{ defaults | tojson }}</script>
+<script src="{{ url_for('static', filename='playlists.js') }}"></script>
 <script>
 const PLAYLIST_STORAGE_KEY = 'plex-playlists-ui-state-v1';
 const AUTO_BANK_SELECTION_KEY = 'plex-auto-bank-selection-v1';
-const STATE_INPUT_IDS = ['scan-path','scan-recursive','an-path','m-path','m-library','m-tags','p-url','p-smart','p-delete-name','p-source','p-destination','p-mode','p-import-name','p-import-url','s-path','s-library'];
+const STATE_INPUT_IDS = ['scan-path','scan-recursive','an-path','m-path','m-library','m-tags','p-url','p-token','p-smart','p-delete-name','p-source','p-destination','p-mode','p-import-name','p-import-url','s-path','s-library','auto-lastfm-user','auto-lastfm-api-key','auto-lastfm-period','auto-lastfm-max-pages'];
 let __plexRaw = [];
 let __defaults = {};
 
@@ -487,21 +529,21 @@ function _collectLastfmConfig() {
   };
 }
 
-function tab(name) {
-  const pane = document.getElementById('tab-'+name);
-  if (!pane) return;
-  document.querySelectorAll('.tab-pane').forEach(e => e.classList.add('hidden'));
-  document.querySelectorAll('.tab-btn').forEach(e => e.classList.remove('active'));
-  pane.classList.remove('hidden');
-  const btn = document.querySelector(`.tab-btn[data-tab="${name}"]`);
-  if (btn) btn.classList.add('active');
-  window.location.hash = 'pl-' + name;
-  if (name === 'auto') loadAutoRules();
-}
-
-async function post(url, body) {
-  const r = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
-  return r.json();
+async function runPipelineJob(jobKey) {
+  const out = document.getElementById('pipeline-2star-out');
+  if (out) out.textContent = '⏳ Lancement du job…';
+  try {
+    const response = await fetch(`/api/run/${encodeURIComponent(jobKey)}`, {method: 'POST'});
+    const data = await response.json();
+    if (!response.ok || data.error) {
+      if (out) out.innerHTML = `<span class="err">❌ ${escapeHtml(data.error || 'Lancement impossible')}</span>`;
+      return;
+    }
+    if (out) out.innerHTML = `<span class="ok">✓ Job lancé</span> — redirection…`;
+    window.location = `/job/${encodeURIComponent(data.run_id)}`;
+  } catch (error) {
+    if (out) out.innerHTML = `<span class="err">❌ ${escapeHtml(error)}</span>`;
+  }
 }
 
 async function detectToken() {
@@ -535,42 +577,6 @@ async function detectToken() {
       info.innerHTML = html;
     }
   } catch (e) { info.textContent = '❌ ' + e; }
-}
-
-function escapeHtml(value) {
-  return String(value ?? '')
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#039;');
-}
-
-function renderMetricCards(items) {
-  return `<div class="result-metrics">${items.map((item) => `
-    <article class="metric-card ${item.tone || ''}">
-      <strong>${escapeHtml(item.value)}</strong>
-      <span>${escapeHtml(item.label)}</span>
-    </article>`).join('')}</div>`;
-}
-
-function renderTagList(items, emptyText) {
-  if (!items || !items.length) return `<p class="muted">${escapeHtml(emptyText)}</p>`;
-  return `<div class="tag-list">${items.map((item) => `<span class="tag-chip">${escapeHtml(item)}</span>`).join('')}</div>`;
-}
-
-function renderResultPanel(title, body, meta='') {
-  return `<section class="surface result-panel">
-    <div class="section-head">
-      <h2>${escapeHtml(title)}</h2>
-      <span class="section-meta">${escapeHtml(meta)}</span>
-    </div>
-    ${body}
-  </section>`;
-}
-
-function renderError(container, message) {
-  container.innerHTML = `<section class="surface result-panel"><p class="err">❌ ${escapeHtml(message)}</p></section>`;
 }
 
 function applyPreset(kind) {
@@ -627,6 +633,8 @@ function restorePlaylistState() {
 function clearSensitiveInputs() {
   const plexToken = document.getElementById('p-token');
   if (plexToken) plexToken.value = '';
+  const lastfmApiKey = document.getElementById('auto-lastfm-api-key');
+  if (lastfmApiKey) lastfmApiKey.value = '';
 }
 
 function clearPlaylistState() {
@@ -1105,6 +1113,7 @@ async function doStats() {
 // ── Tab Auto : playlists personnalisées ───────────────────────────────────
 // État local des règles
 let __autoRules = [];
+let __autoBuiltinPlaylists = [];
 let __autoGenRunId = null;
 let __autoGenPollTimer = null;
 let __autoPreviewItems = [];
@@ -1154,6 +1163,7 @@ async function loadAutoRules() {
   const d = await r.json();
   if (d.error) { out.innerHTML = `<p class="err">❌ ${escapeHtml(d.error)}</p>`; return; }
   __autoRules = (d.playlists || []).map(_ruleFromApi);
+  __autoBuiltinPlaylists = Array.isArray(d.builtin_playlists) ? d.builtin_playlists : [];
   const pathEl = document.getElementById('auto-config-path');
   if (pathEl) pathEl.textContent = d.path || '';
   renderAutoRules();
@@ -1216,11 +1226,25 @@ async function refreshAutoCreatedPlaylists() {
 
 function renderAutoRules() {
   const out = document.getElementById('auto-rules-list');
-  if (!__autoRules.length) {
+  if (!__autoRules.length && !__autoBuiltinPlaylists.length) {
     out.innerHTML = '<p class="muted">Aucune règle définie — clique sur <strong>+ Ajouter une règle</strong>.</p>';
     return;
   }
-  out.innerHTML = __autoRules.map((r, i) => renderRuleCard(r, i)).join('');
+  const builtinHtml = __autoBuiltinPlaylists.map((r) => renderBuiltinPlaylistCard(r)).join('');
+  const customHtml = __autoRules.map((r, i) => renderRuleCard(r, i)).join('');
+  out.innerHTML = builtinHtml + customHtml;
+}
+
+function renderBuiltinPlaylistCard(rule) {
+  const badge = rule.requires_lastfm === true ? 'Last.fm requis' : 'Natif';
+  return `<article class="surface section-block auto-rule-card is-readonly">
+    <div class="section-head">
+      <h3 style="font-size:14px">Playlist native — <em>${escapeHtml(rule.name || '')}</em></h3>
+      <span class="muted">${escapeHtml(badge)}</span>
+    </div>
+    <p class="muted">${escapeHtml(rule.description || 'Playlist fournie par le générateur automatique.')}</p>
+    <p class="muted tiny-gap">Visible dans la prévisualisation et générée automatiquement quand Last.fm est configuré et que suffisamment de titres correspondent dans Plex.</p>
+  </article>`;
 }
 
 function renderRuleCard(r, i) {
@@ -1471,6 +1495,14 @@ function setAllAutoBankChecks(checked) {
   _saveAutoBankSelectionState();
 }
 
+function _isLastfmAutoPlaylist(name) {
+  const normalized = String(name || '').trim();
+  if (!normalized) return false;
+  return __autoBuiltinPlaylists.some((item) => (
+    item && item.source === 'lastfm' && normalized.includes(String(item.name || '').trim())
+  ));
+}
+
 function _renderAutoBank(items) {
   const out = document.getElementById('auto-bank-out');
   if (!out) return;
@@ -1489,7 +1521,7 @@ function _renderAutoBank(items) {
   const rows = items.map((item, idx) => `
     <label class="inline-check" style="display:flex;justify-content:space-between;gap:12px;padding:6px 8px;border:1px solid var(--line);border-radius:10px">
       <span style="display:flex;gap:8px;align-items:center">
-        <input type="checkbox" data-auto-bank-name="${escapeHtml(item.name)}" ${(hasSaved ? savedSet.has(String(item.name || '')) : idx < 20) ? 'checked' : ''}>
+        <input type="checkbox" data-auto-bank-name="${escapeHtml(item.name)}" ${(hasSaved ? savedSet.has(String(item.name || '')) : (_isLastfmAutoPlaylist(item.name) || idx < 20)) ? 'checked' : ''}>
         <span>${escapeHtml(item.name)}</span>
       </span>
       <span class="muted">${escapeHtml(item.count)} titres</span>
@@ -1608,7 +1640,6 @@ function pollAutoGen() {
 document.addEventListener('DOMContentLoaded', () => {
   restorePlaylistState();
   bindStatePersistence();
-  clearSensitiveInputs();
   const hash = window.location.hash || '';
   if (hash.startsWith('#pl-')) {
     const target = hash.replace('#pl-', '').trim();

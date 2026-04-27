@@ -36,6 +36,11 @@ services:
       - "${PLAYLISTS_HOST:-/mnt/MyBook/playlists}:/playlists"
       - "${ITUNES_HOST:-/mnt/MyBook/Musiques/iTunes}:/itunes"
       - "${DATA_HOST:-./docker-data}:/data"
+      # Bind-mount du code (dev : les runs one-shot prennent les modifications locales)
+      - "./ratings:/app/ratings:ro"
+      - "./playlists:/app/playlists:ro"
+      - "./utils:/app/utils:ro"
+      - "${SONGREC_BIN_HOST:-/usr/bin/songrec}:/usr/local/bin/songrec:ro"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     # Pas de restart — usage one-shot via `docker compose run --rm scripts ...`
@@ -147,6 +152,11 @@ services:
       - "${MUSIC_HOST:-/home/paulceline/Musiques}:/music"
       - "${PLAYLISTS_HOST:-/mnt/MyBook/playlists}:/playlists"
       - "${DATA_HOST:-./docker-data}:/data"
+      # Bind-mount du code (dev : évite les décalages image/code local)
+      - "./ratings:/app/ratings:ro"
+      - "./playlists:/app/playlists:ro"
+      - "./utils:/app/utils:ro"
+      - "${SONGREC_BIN_HOST:-/usr/bin/songrec}:/usr/local/bin/songrec:ro"
     extra_hosts:
       - "host.docker.internal:host-gateway"
 

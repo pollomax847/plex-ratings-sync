@@ -14,13 +14,14 @@ import json
 import os
 import re
 import time
-import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import PurePosixPath, PureWindowsPath
 from typing import Optional
+
+from text_normalization import normalize_ascii
 
 # ─── defaults ────────────────────────────────────────────────────────────────
 
@@ -66,8 +67,7 @@ class DownloadResult:
 
 def _norm(s: str) -> str:
     """Lowercase, NFKD→ASCII, alphanumeric only."""
-    s = unicodedata.normalize("NFKD", s or "").encode("ascii", "ignore").decode().lower()
-    return re.sub(r"[^a-z0-9]", "", s)
+    return normalize_ascii(s)
 
 
 def _basename(path: str) -> str:

@@ -32,12 +32,22 @@ import re
 import sqlite3
 import sys
 import tempfile
-import unicodedata
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Optional, Sequence
+
+from plex_api import (
+    default_plex_url,
+    plex_create_audio_playlist,
+    plex_delete_playlist,
+    plex_find_playlist_rating_keys,
+    plex_get_playlist_item_id_set,
+    plex_machine_identifier,
+    plex_request,
+)
+from text_normalization import normalize_ascii, normalize_unicode
 
 # ─── defaults ────────────────────────────────────────────────────────────────
 
@@ -48,7 +58,7 @@ DEFAULT_PLEX_DB = Path(
         "Plex Media Server/Plug-in Support/Databases/com.plexapp.plugins.library.db",
     )
 )
-DEFAULT_PLEX_URL   = os.environ.get("PLEX_URL",   "http://localhost:32400")
+DEFAULT_PLEX_URL   = os.environ.get("PLEX_URL", default_plex_url())
 DEFAULT_PLEX_TOKEN = os.environ.get("PLEX_TOKEN", "")
 DEFAULT_SLSKD_URL  = os.environ.get("SLSKD_URL",  "http://localhost:5030")
 DEFAULT_SLSKD_KEY  = os.environ.get("SLSKD_API_KEY", "")
@@ -64,42 +74,21 @@ Candidates = list[Candidate]
 # ─── Plex API helpers ─────────────────────────────────────────────────────────
 
 
-def plex_request(method: str, url: str, token: str) -> bytes:
-    req = urllib.request.Request(url=url, method=method)
-    req.add_header("X-Plex-Token", token)
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        return resp.read()
-
-
 def get_machine_id(plex_url: str, token: str) -> str:
-    root = ET.fromstring(plex_request("GET", f"{plex_url.rstrip('/')}/", token))
-    mid = root.attrib.get("machineIdentifier")
-    if not mid:
-        raise RuntimeError("machineIdentifier missing from Plex API response")
-    return mid
+    return plex_machine_identifier(plex_url, token)
 
 
-def find_playlist_rating_key(plex_url: str, token: str, title: str) -> Optional[str]:
-    root = ET.fromstring(plex_request("GET", f"{plex_url.rstrip('/')}/playlists", token))
-    for item in root.findall("Playlist") + root.findall("Directory"):
-        if (
-            item.attrib.get("playlistType") == "audio"
-            and item.attrib.get("title", "").lower() == title.lower()
-        ):
-            return item.attrib.get("ratingKey")
-    return None
+def find_playlist_rating_keys(plex_url: str, token: str, title: str) -> list[str]:
+    return plex_find_playlist_rating_keys(plex_url, token, title)
 
 
 def delete_playlist(plex_url: str, token: str, rating_key: str) -> None:
-    plex_request("DELETE", f"{plex_url.rstrip('/')}/playlists/{rating_key}", token)
+    plex_delete_playlist(plex_url, token, rating_key)
 
 
 def get_playlist_item_ids(plex_url: str, token: str, rating_key: str) -> set[int]:
     """Return the set of metadata item IDs already in a playlist."""
-    root = ET.fromstring(
-        plex_request("GET", f"{plex_url.rstrip('/')}/playlists/{rating_key}/items", token)
-    )
-    return {int(t.attrib["ratingKey"]) for t in root.findall("Track") if "ratingKey" in t.attrib}
+    return plex_get_playlist_item_id_set(plex_url, token, rating_key)
 
 
 def create_playlist(
@@ -108,30 +97,7 @@ def create_playlist(
     if not track_ids:
         print("  ⚠️  No tracks to add — playlist not created.", flush=True)
         return
-
-    first_uri = (
-        f"server://{machine_id}/com.plexapp.plugins.library/library/metadata/{track_ids[0]}"
-    )
-    q = urllib.parse.urlencode(
-        {"type": "audio", "title": title, "smart": "0", "uri": first_uri}
-    )
-    created = ET.fromstring(
-        plex_request("POST", f"{plex_url.rstrip('/')}/playlists?{q}", token)
-    )
-
-    node = created.find("Playlist") or created.find("Directory")
-    rk = node.attrib.get("ratingKey") if node is not None else None
-    if not rk:
-        raise RuntimeError(f"Playlist created but ratingKey missing for: {title!r}")
-
-    batch_size = 200
-    for idx in range(0, len(track_ids) - 1, batch_size):
-        batch = track_ids[1 + idx : 1 + idx + batch_size]
-        csv_ids = ",".join(str(i) for i in batch)
-        uri = f"server://{machine_id}/com.plexapp.plugins.library/library/metadata/{csv_ids}"
-        bq = urllib.parse.urlencode({"uri": uri})
-        plex_request("PUT", f"{plex_url.rstrip('/')}/playlists/{rk}/items?{bq}", token)
-
+    plex_create_audio_playlist(plex_url, token, title, track_ids, machine_id=machine_id)
     print(f"  ✅ Playlist '{title}' created with {len(track_ids)} tracks.", flush=True)
 
 
@@ -140,13 +106,12 @@ def create_playlist(
 
 def norm(s: str) -> str:
     """NFKD → ASCII, lowercase, alphanumeric only."""
-    s = unicodedata.normalize("NFKD", s or "").encode("ascii", "ignore").decode().lower()
-    return re.sub(r"[^a-z0-9]", "", s)
+    return normalize_ascii(s)
 
 
 def norm_u(s: str) -> str:
     """Lowercase, strip non-word chars but keep unicode (for non-Latin)."""
-    return re.sub(r"[^\w\d]", "", (s or "").lower(), flags=re.UNICODE)
+    return normalize_unicode(s)
 
 
 # ─── DB helpers ───────────────────────────────────────────────────────────────
@@ -667,28 +632,50 @@ def main():
     machine_id = get_machine_id(args.plex_url, args.plex_token)
     print(f"   Machine ID: {machine_id}", flush=True)
 
-    existing_rk = find_playlist_rating_key(args.plex_url, args.plex_token, playlist_name)
+    existing_rks = find_playlist_rating_keys(args.plex_url, args.plex_token, playlist_name)
+    existing_rk = existing_rks[0] if existing_rks else None
 
-    if existing_rk and not args.append:
-        print(f"  🗑️  Deleting existing playlist '{playlist_name}' (ratingKey={existing_rk})…", flush=True)
-        delete_playlist(args.plex_url, args.plex_token, existing_rk)
+    if existing_rks and len(existing_rks) > 1:
+        print(
+            f"  🧹 {len(existing_rks)} playlists existantes trouvées pour '{playlist_name}' ; consolidation en cours.",
+            flush=True,
+        )
+
+    if existing_rks and not args.append:
+        print(
+            f"  🗑️  Deleting existing playlist(s) '{playlist_name}' (ratingKeys={', '.join(existing_rks)})…",
+            flush=True,
+        )
+        for rating_key in existing_rks:
+            delete_playlist(args.plex_url, args.plex_token, rating_key)
         existing_rk = None
 
     if existing_rk and args.append:
-        # Exclure les morceaux déjà présents dans la playlist
-        existing_item_ids = get_playlist_item_ids(args.plex_url, args.plex_token, existing_rk)
+        # Exclure les morceaux déjà présents et fusionner les doublons éventuels dans une seule playlist.
+        keeper_item_ids = get_playlist_item_ids(args.plex_url, args.plex_token, existing_rk)
+        duplicate_item_ids: set[int] = set()
+        for duplicate_rk in existing_rks[1:]:
+            duplicate_item_ids.update(get_playlist_item_ids(args.plex_url, args.plex_token, duplicate_rk))
+
+        merged_ids: list[int] = []
+        seen_ids: set[int] = set()
+        for item_id in list(duplicate_item_ids) + matched_ids:
+            if item_id not in keeper_item_ids and item_id not in seen_ids:
+                seen_ids.add(item_id)
+                merged_ids.append(item_id)
+
         before = len(matched_ids)
-        matched_ids = [i for i in matched_ids if i not in existing_item_ids]
+        matched_ids = [i for i in matched_ids if i in merged_ids]
         if before - len(matched_ids):
             print(f"  🔁 {before - len(matched_ids)} morceau(x) déjà dans la playlist, ignoré(s).", flush=True)
-        if not matched_ids:
+        if not matched_ids and not duplicate_item_ids:
             print("  ℹ️  Aucun nouveau morceau à ajouter.", flush=True)
             return
 
         # Append by adding to existing playlist
         batch_size = 200
-        for idx in range(0, len(matched_ids), batch_size):
-            batch = matched_ids[idx : idx + batch_size]
+        for idx in range(0, len(merged_ids), batch_size):
+            batch = merged_ids[idx : idx + batch_size]
             bcsv = ",".join(str(i) for i in batch)
             uri = (
                 f"server://{machine_id}/com.plexapp.plugins.library"
@@ -700,8 +687,10 @@ def main():
                 f"{args.plex_url.rstrip('/')}/playlists/{existing_rk}/items?{bq}",
                 args.plex_token,
             )
+        for duplicate_rk in existing_rks[1:]:
+            delete_playlist(args.plex_url, args.plex_token, duplicate_rk)
         print(
-            f"  ✅ Appended {len(matched_ids)} tracks to existing playlist '{playlist_name}'.",
+            f"  ✅ Appended {len(merged_ids)} tracks to existing playlist '{playlist_name}'.",
             flush=True,
         )
     else:

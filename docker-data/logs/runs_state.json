@@ -1,7 +1,40 @@
 {
   "version": 1,
-  "saved_at": 1777278577.8552396,
+  "saved_at": 1777289108.8560815,
   "runs": [
+    {
+      "run_id": "1777288622-5aa320",
+      "job_key": "ratings_2star_pipeline",
+      "cmd": [
+        "python3",
+        "ratings/process_2star_pipeline.py"
+      ],
+      "started_at": 1777288622.384112,
+      "ended_at": 1777289108.8560598,
+      "exit_code": -15,
+      "log_path": "/data/logs/1777288622-5aa320-ratings_2star_pipeline.log"
+    },
+    {
+      "run_id": "1777286645-fe4ef1",
+      "job_key": "playlists_auto_custom",
+      "cmd": [
+        "python3",
+        "playlists/auto_playlists_plexamp.py",
+        "--verbose",
+        "--plex-db",
+        "/plex/Plug-in Support/Databases/com.plexapp.plugins.library.db",
+        "--lastfm-user",
+        "pol2_1",
+        "--lastfm-period",
+        "overall",
+        "--lastfm-max-pages",
+        "5"
+      ],
+      "started_at": 1777286645.8578424,
+      "ended_at": 1777287731.4013462,
+      "exit_code": 0,
+      "log_path": "/data/logs/1777286645-fe4ef1-playlists_auto_custom.log"
+    },
     {
       "run_id": "1777278577-38d8ec",
       "job_key": "playlists_auto_custom",
@@ -19,8 +52,8 @@
         "5"
       ],
       "started_at": 1777278577.8253896,
-      "ended_at": null,
-      "exit_code": null,
+      "ended_at": 1777279571.5731437,
+      "exit_code": 0,
       "log_path": "/data/logs/1777278577-38d8ec-playlists_auto_custom.log"
     },
     {
