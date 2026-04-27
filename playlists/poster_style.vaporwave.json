@@ -17,7 +17,7 @@
   "line_color": [255, 100, 220, 130],
 
   "font_path": "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-  "emoji_font_path": "/usr/share/fonts/truetype/noto/NotoSansSymbols2-Regular.ttf",
+  "emoji_font_path": "/usr/share/fonts/truetype/ancient-scripts/Symbola_hint.ttf",
 
   "strip_auto_prefix": true,
   "strip_count_suffix": true,

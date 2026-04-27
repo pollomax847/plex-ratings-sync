@@ -1,4 +1,7 @@
 {
+    "python.analysis.typeCheckingMode": "basic",
+    "python.defaultInterpreterPath": "/home/paulceline/scripts/.venv/bin/python",
+    "python.analysis.extraPaths": ["/home/paulceline/scripts/.venv/lib/python3.12/site-packages"],
     "chat.tools.terminal.autoApprove": {
         "command": true,
         "/home/paulceline/scripts/.venv/bin/python": true,

@@ -319,17 +319,32 @@ class Runner:
             for r in sorted(restored.values(), key=lambda x: x.started_at, reverse=True)[: self._max]
         }
 
-    def launch(self, job_key: str, extra_args: list[str] | None = None) -> JobRun:
+    def launch(
+        self,
+        job_key: str,
+        extra_args: list[str] | None = None,
+        extra_env: dict[str, str] | None = None,
+    ) -> JobRun:
         jd = JOBS.get(job_key)
         if not jd:
             raise KeyError(f"job inconnu: {job_key}")
         cmd = list(jd.cmd) + list(extra_args or [])
-        return self._run_cmd(job_key, cmd)
+        return self._run_cmd(job_key, cmd, extra_env=extra_env)
 
-    def launch_custom(self, job_key: str, cmd: list[str]) -> JobRun:
-        return self._run_cmd(job_key, cmd)
+    def launch_custom(
+        self,
+        job_key: str,
+        cmd: list[str],
+        extra_env: dict[str, str] | None = None,
+    ) -> JobRun:
+        return self._run_cmd(job_key, cmd, extra_env=extra_env)
 
-    def _run_cmd(self, job_key: str, cmd: list[str]) -> JobRun:
+    def _run_cmd(
+        self,
+        job_key: str,
+        cmd: list[str],
+        extra_env: dict[str, str] | None = None,
+    ) -> JobRun:
         run_id = f"{int(time.time())}-{uuid.uuid4().hex[:6]}"
         run = JobRun(run_id=run_id, job_key=job_key, cmd=cmd, started_at=time.time())
         with self._lock:
@@ -349,6 +364,10 @@ class Runner:
         def target():
             env = os.environ.copy()
             env["PYTHONUNBUFFERED"] = "1"
+            if extra_env:
+                for key, value in extra_env.items():
+                    if key and value is not None:
+                        env[str(key)] = str(value)
             try:
                 run.proc = subprocess.Popen(
                     cmd,
@@ -697,6 +716,10 @@ def playlists_page():
         "playlists": _pl_default,
         "plex_url": os.environ.get("PLEX_URL", _default_plex_url()),
         "plex_token": "",
+        "lastfm_user": os.environ.get("LASTFM_USER", ""),
+        "lastfm_period": os.environ.get("LASTFM_PERIOD", "overall"),
+        "lastfm_max_pages": int(os.environ.get("LASTFM_MAX_PAGES", "5") or 5),
+        "lastfm_api_key_set": bool(os.environ.get("LASTFM_API_KEY", "").strip()),
         "poster_style": current_poster_style,
         "poster_styles": [
             {"name": p.name.replace("poster_style.", "").replace(".json", ""), "path": str(p)}
@@ -719,6 +742,124 @@ def logs_page():
         logs_dir=LOGS_DIR,
         docker_control_enabled=_docker_control_enabled(),
     )
+
+
+# -------------------- Documentation guides ----------------
+@app.route("/docs/lastfm")
+def guide_lastfm():
+    """Serve Last.fm setup guide as HTML."""
+    guide_path = PROJECT_ROOT / "LASTFM_SETUP.md"
+    if not guide_path.exists():
+        return '<p>Guide Last.fm not found</p>', 404
+    
+    # Read markdown and convert to basic HTML
+    content = guide_path.read_text(encoding='utf-8')
+    
+    # Very basic markdown → HTML conversion
+    lines = content.split('\n')
+    html_lines = []
+    in_code_block = False
+    in_list = False
+    in_table = False
+    
+    for line in lines:
+        # Code blocks
+        if line.startswith('```'):
+            if in_code_block:
+                html_lines.append('</pre>')
+                in_code_block = False
+            else:
+                html_lines.append('<pre class="code-block">')
+                in_code_block = True
+            continue
+        
+        if in_code_block:
+            html_lines.append(line.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;'))
+            continue
+        
+        # Links
+        line = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<a href="\2" target="_blank">\1</a>', line)
+        
+        # Code/backticks
+        line = re.sub(r'`([^`]+)`', r'<code>\1</code>', line)
+        
+        # Bold
+        line = re.sub(r'\*\*([^*]+)\*\*', r'<strong>\1</strong>', line)
+        line = re.sub(r'__([^_]+)__', r'<strong>\1</strong>', line)
+        
+        # Italic
+        line = re.sub(r'\*([^*]+)\*', r'<em>\1</em>', line)
+        line = re.sub(r'_([^_]+)_', r'<em>\1</em>', line)
+        
+        # Headings
+        if line.startswith('### '):
+            html_lines.append(f'<h3>{line[4:]}</h3>')
+        elif line.startswith('## '):
+            html_lines.append(f'<h2>{line[3:]}</h2>')
+        elif line.startswith('# '):
+            html_lines.append(f'<h1>{line[2:]}</h1>')
+        # Lists
+        elif line.startswith('- '):
+            if not in_list:
+                html_lines.append('<ul>')
+                in_list = True
+            html_lines.append(f'<li>{line[2:]}</li>')
+        elif line.startswith('  - '):
+            html_lines.append(f'<li style="margin-left:2rem">{line[4:]}</li>')
+        elif line.strip().startswith('|'):
+            if not in_table:
+                html_lines.append('<table class="guide-table">')
+                in_table = True
+            # Minimal table row parsing
+            cells = [c.strip() for c in line.split('|')[1:-1]]
+            html_lines.append('<tr>')
+            for cell in cells:
+                html_lines.append(f'<td>{cell}</td>')
+            html_lines.append('</tr>')
+        else:
+            if in_list:
+                html_lines.append('</ul>')
+                in_list = False
+            if in_table and not line.strip().startswith('|'):
+                html_lines.append('</table>')
+                in_table = False
+            
+            if line.strip():
+                html_lines.append(f'<p>{line}</p>')
+            else:
+                html_lines.append('')
+    
+    if in_list:
+        html_lines.append('</ul>')
+    if in_table:
+        html_lines.append('</table>')
+    
+    html_content = '\n'.join(html_lines)
+    
+    # Wrap in a styled container
+    full_html = f"""
+    <section class="guide-page">
+        <style>
+            .guide-page {{ max-width: 900px; margin: 2rem auto; padding: 0 1rem; font-size: 1rem; line-height: 1.6; }}
+            .guide-page h1, .guide-page h2, .guide-page h3 {{ margin-top: 2rem; margin-bottom: 1rem; }}
+            .guide-page h1 {{ font-size: 2.5em; border-bottom: 3px solid var(--primary); padding-bottom: 0.5rem; }}
+            .guide-page h2 {{ font-size: 1.8em; color: var(--primary); }}
+            .guide-page h3 {{ font-size: 1.3em; }}
+            .guide-page ul {{ margin: 1rem 0; padding-left: 2rem; }}
+            .guide-page li {{ margin: 0.5rem 0; }}
+            .guide-page code {{ background: var(--bg-muted); padding: 0.2em 0.4em; border-radius: 3px; font-family: monospace; }}
+            .guide-page pre {{ background: #1e1e1e; color: #d4d4d4; padding: 1rem; border-radius: 5px; overflow-x: auto; }}
+            .guide-page a {{ color: var(--link-color); text-decoration: none; }}
+            .guide-page a:hover {{ text-decoration: underline; }}
+            .guide-page table {{ border-collapse: collapse; margin: 1rem 0; width: 100%; }}
+            .guide-page table td, .guide-page table th {{ border: 1px solid var(--border-color); padding: 0.5rem; text-align: left; }}
+            .guide-page table th {{ background: var(--bg-secondary); font-weight: bold; }}
+        </style>
+        {html_content}
+    </section>
+    """
+    
+    return full_html, 200, {'Content-Type': 'text/html; charset=utf-8'}
 
 
 # -------------------- API : détection automatique du token Plex --------------
@@ -1698,6 +1839,15 @@ def api_custom_generate():
     """Lance auto_playlists_plexamp.py avec la config custom (optionnel : dry_run)."""
     data = request.get_json(force=True) or {}
     dry_run = bool(data.get("dry_run", False))
+    lastfm_user = str(data.get("lastfm_user") or "").strip()
+    lastfm_api_key = str(data.get("lastfm_api_key") or "").strip()
+    lastfm_period = str(data.get("lastfm_period") or "overall").strip() or "overall"
+    lastfm_max_pages_raw = data.get("lastfm_max_pages", 5)
+    try:
+        lastfm_max_pages = max(1, int(lastfm_max_pages_raw))
+    except Exception:
+        lastfm_max_pages = 5
+
     plex_db = _find_plex_db()
     cmd = ["python3", "playlists/auto_playlists_plexamp.py", "--verbose"]
     if plex_db:
@@ -1706,7 +1856,18 @@ def api_custom_generate():
         cmd += ["--custom-config", str(CUSTOM_PLAYLISTS_CONFIG)]
     if dry_run:
         cmd += ["--dry-run"]
-    run = runner.launch_custom("playlists_auto_custom", cmd)
+
+    if lastfm_user:
+        cmd += ["--lastfm-user", lastfm_user]
+    if lastfm_period:
+        cmd += ["--lastfm-period", lastfm_period]
+    cmd += ["--lastfm-max-pages", str(lastfm_max_pages)]
+
+    extra_env: dict[str, str] = {}
+    if lastfm_api_key:
+        extra_env["LASTFM_API_KEY"] = lastfm_api_key
+
+    run = runner.launch_custom("playlists_auto_custom", cmd, extra_env=extra_env or None)
     return jsonify(ok=True, run_id=run.run_id, dry_run=dry_run, cmd=cmd)
 
 
@@ -1955,7 +2116,13 @@ def api_poster_preview():
     })
 
 
-def _build_auto_playlists_snapshot() -> tuple[PlexAmpAutoPlaylist, dict[str, list[dict[str, Any]]], list[dict[str, Any]], str]:
+def _build_auto_playlists_snapshot(
+    *,
+    lastfm_user: str = "",
+    lastfm_api_key: str = "",
+    lastfm_period: str = "overall",
+    lastfm_max_pages: int = 5,
+) -> tuple[PlexAmpAutoPlaylist, dict[str, list[dict[str, Any]]], list[dict[str, Any]], str]:
     """Construit un snapshot des playlists auto générées pour preview/import sélectif."""
     if PlexAmpAutoPlaylist is None:
         raise RuntimeError(f"Moteur playlists auto indisponible: {_auto_pl_err}")
@@ -1964,7 +2131,14 @@ def _build_auto_playlists_snapshot() -> tuple[PlexAmpAutoPlaylist, dict[str, lis
     if not plex_db:
         raise RuntimeError("Base Plex introuvable")
 
-    generator = PlexAmpAutoPlaylist(plex_db_path=plex_db, verbose=False)
+    generator = PlexAmpAutoPlaylist(
+        plex_db_path=plex_db,
+        verbose=False,
+        lastfm_user=lastfm_user,
+        lastfm_api_key=lastfm_api_key,
+        lastfm_period=lastfm_period,
+        lastfm_max_pages=lastfm_max_pages,
+    )
     tracks = generator.get_track_data()
     if not tracks:
         raise RuntimeError("Aucune piste détectée dans la base Plex")
@@ -1979,8 +2153,22 @@ def _build_auto_playlists_snapshot() -> tuple[PlexAmpAutoPlaylist, dict[str, lis
 @app.post("/api/playlists/auto/preview")
 def api_auto_preview():
     """Prévisualise toutes les playlists auto candidates avec nombre de titres."""
+    data = request.get_json(silent=True) or {}
+    lastfm_user = str(data.get("lastfm_user") or "").strip()
+    lastfm_api_key = str(data.get("lastfm_api_key") or "").strip()
+    lastfm_period = str(data.get("lastfm_period") or "overall").strip() or "overall"
     try:
-        _, playlists, tracks, plex_db = _build_auto_playlists_snapshot()
+        lastfm_max_pages = max(1, int(data.get("lastfm_max_pages", 5)))
+    except Exception:
+        lastfm_max_pages = 5
+
+    try:
+        _, playlists, tracks, plex_db = _build_auto_playlists_snapshot(
+            lastfm_user=lastfm_user,
+            lastfm_api_key=lastfm_api_key,
+            lastfm_period=lastfm_period,
+            lastfm_max_pages=lastfm_max_pages,
+        )
     except Exception as exc:
         return jsonify(error=str(exc)), 500
 
@@ -2005,6 +2193,13 @@ def api_auto_apply_selected():
     selected_names_raw = data.get("selected_names") or []
     append_existing = bool(data.get("append_existing", False))
     replace_all_existing = bool(data.get("replace_all_existing", False))
+    lastfm_user = str(data.get("lastfm_user") or "").strip()
+    lastfm_api_key = str(data.get("lastfm_api_key") or "").strip()
+    lastfm_period = str(data.get("lastfm_period") or "overall").strip() or "overall"
+    try:
+        lastfm_max_pages = max(1, int(data.get("lastfm_max_pages", 5)))
+    except Exception:
+        lastfm_max_pages = 5
 
     if not isinstance(selected_names_raw, list):
         return jsonify(error="selected_names doit être une liste"), 400
@@ -2014,7 +2209,12 @@ def api_auto_apply_selected():
         return jsonify(error="Aucune playlist sélectionnée"), 400
 
     try:
-        generator, playlists, tracks, plex_db = _build_auto_playlists_snapshot()
+        generator, playlists, tracks, plex_db = _build_auto_playlists_snapshot(
+            lastfm_user=lastfm_user,
+            lastfm_api_key=lastfm_api_key,
+            lastfm_period=lastfm_period,
+            lastfm_max_pages=lastfm_max_pages,
+        )
     except Exception as exc:
         return jsonify(error=str(exc)), 500
 

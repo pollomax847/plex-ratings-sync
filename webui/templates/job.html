@@ -89,7 +89,7 @@
 
 <script>
 (function() {
-  const runId = {{ run.run_id | tojson }};
+  const runId = {{ run.run_id | tojson | safe }};
   const cons = document.getElementById('console');
   const pill = document.getElementById('pill-status');
   const liveDot = document.getElementById('live-dot');

@@ -5,7 +5,7 @@
   <div>
     <p class="eyebrow">Analyse et synchronisation</p>
     <h1>Outils Playlists</h1>
-    <p class="muted">Inspection M3U/PLS, matching audio, comparaison de versions et audit Plex depuis une seule page.</p>
+    <p class="muted">Création automatique, import, analyse et gestion des playlists Plex.</p>
   </div>
 </section>
 {% if delete_status.deleted %}
@@ -21,24 +21,6 @@
 </section>
 {% endif %}
 {% if not pld_available %}<p class="err">Module detector indisponible : {{ pld_err }}</p>{% endif %}
-
-<section class="notice notice-info">
-  <strong>Repère rapide</strong>
-  <span>L'auto-détection du token Plex se trouve dans l'onglet <strong>Plex</strong>. En Docker, si <code>/plex/Preferences.xml</code> est en <code>600 root:root</code>, la détection listera le fichier mais ne pourra pas le lire.</span>
-</section>
-
-<section class="surface summary-panel">
-  <div class="section-head">
-    <h2>Presets rapides</h2>
-    <span class="section-meta">Remplissage automatique des champs</span>
-  </div>
-  <div class="tag-list">
-    <button class="btn ghost" onclick="applyPreset('defaults')">Defaults env</button>
-    <button class="btn ghost" onclick="applyPreset('docker')">Docker standard</button>
-    <button class="btn ghost" onclick="applyPreset('host')">Host standard</button>
-    <button class="btn ghost" onclick="clearPlaylistState()">Effacer etat local</button>
-  </div>
-</section>
 
 <div class="tabs">
   <button data-tab="plex" onclick="tab('plex')" class="tab-btn active">Plex</button>
@@ -75,7 +57,7 @@
     </div>
     <div class="inline-actions top-gap">
       <label class="inline-check"><input type="checkbox" id="p-smart" checked> Inclure smart playlists</label>
-      <button class="btn" onclick="doPlex()">Lister</button>
+      <button class="btn" onclick="doPlex()" title="Récupère et affiche toutes vos playlists Plex (peut prendre quelques secondes)">📋 Lister mes playlists</button>
     </div>
     <div id="p-detect-info" class="muted tiny-gap"></div>
 
@@ -83,14 +65,14 @@
       <section class="surface utility-card utility-card-danger">
         <div class="section-head">
           <h3>Suppression rapide</h3>
-          <span class="section-meta">Nom exact</span>
+           <span class="section-meta">⚠️ Action définitive</span>
         </div>
         <div class="field-block">
-          <label for="p-delete-name">Playlist à supprimer</label>
-          <input id="p-delete-name" placeholder="Nom exact dans Plex">
+           <label for="p-delete-name">Nom exact de la playlist</label>
+           <input id="p-delete-name" placeholder="Ex: Ma Playlist Préférée" title="Doit correspondre EXACTEMENT au nom dans Plex">
         </div>
         <div class="inline-actions top-gap">
-          <button class="btn danger" onclick="deletePlaylistByName()">Supprimer</button>
+           <button class="btn danger" onclick="deletePlaylistByName()" title="⚠️ SUPPRIME DÉFINITIVEMENT la playlist - pas d'annulation">🗑️ Supprimer (définitif)</button>
         </div>
         <div id="p-action-out" class="muted tiny-gap"></div>
       </section>
@@ -331,16 +313,57 @@ Billie Jean,Michael Jackson,Thriller</pre>
 
   <section class="surface section-block stack">
     <div class="section-head">
-      <h2>Sauvegarder &amp; Générer</h2>
+      <h2>🎶 Générer les playlists automatiques</h2>
     </div>
     <p class="muted">
-      Sauvegarde d'abord les règles dans le fichier JSON, puis génère les playlists dans Plex.
-      Le bouton <strong>Simulation</strong> liste les pistes sans rien créer.
+      Étape 1: Configurez Last.fm (optionnel) | Étape 2: Cliquez Générer | Résultat: Playlists créées dans Plex
     </p>
+    
+    <!-- Last.fm Help Section -->
+     <details class="surface compact-notice" style="margin-bottom: 1.5rem; background: rgba(88, 166, 255, 0.05); border: 1px solid rgba(88, 166, 255, 0.2);">
+       <summary style="cursor: pointer; font-weight: 500; color: var(--link-color); padding: 0.5rem;">
+         📡 Optionnel: Ajouter Last.fm (vos vraies écoutes) — cliquez pour voir comment
+       </summary>
+      <div style="padding: 1rem; margin-top: 0.5rem; font-size: 0.9rem; line-height: 1.6;">
+        <p><strong>📋 Résumé rapide :</strong></p>
+        <ol style="margin-left: 1.5rem;">
+           <li>Allez sur <a href="https://www.last.fm/api/account/create" target="_blank" rel="noopener">https://www.last.fm/api/account/create</a> et créez une API key</li>
+           <li>Entrez votre pseudo Last.fm ci-dessous (ex: <code>pol2_1</code>)</li>
+           <li>Collez votre API Key dans le champ "🔑 API Key"</li>
+           <li>Cliquez <strong>Générer maintenant!</strong> ci-dessous</li>
+        </ol>
+         <p style="margin-top: 1rem; color: var(--text-muted);"><small>
+           💡 Besoin d'aide? <a href="/docs/lastfm" target="_blank" rel="noopener">📖 Lire le guide complet</a>
+         </small></p>
+      </div>
+    </details>
+
+  <div class="form-grid three-col compact-gap" style="align-items:flex-end">
+      <div class="field-block">
+           <label for="auto-lastfm-user">🎵 Pseudo Last.fm</label>
+        <input id="auto-lastfm-user" placeholder="ex: pol2_1" value="{{ defaults.lastfm_user or '' }}">
+      </div>
+      <div class="field-block">
+           <label for="auto-lastfm-api-key">🔑 API Key <a href="https://www.last.fm/api/account/create" target="_blank" title="Créer une clé">↗</a></label>
+        <input id="auto-lastfm-api-key" type="password" placeholder="Laisse vide pour utiliser .env">
+           <small class="muted">{% if defaults.lastfm_api_key_set %}✅ Dans .env{% else %}Remplissez ici{% endif %}</small>
+      </div>
+      <div class="field-block">
+           <label for="auto-lastfm-period" title="Sur quelle période d'écoutes prendre">📅 Période</label>
+           <select id="auto-lastfm-period" title="overall = toutes vos écoutes">
+             {% set lf_period = (defaults.lastfm_period or 'overall') %}
+             <option value="overall" {% if lf_period == 'overall' %}selected{% endif %}>Toutes</option>
+             <option value="12month" {% if lf_period == '12month' %}selected{% endif %}>12 mois</option>
+             <option value="6month" {% if lf_period == '6month' %}selected{% endif %}>6 mois</option>
+             <option value="1month" {% if lf_period == '1month' %}selected{% endif %}>1 mois</option>
+             <option value="7day" {% if lf_period == '7day' %}selected{% endif %}>7 jours</option>
+           </select>
+      </div>
+    </div>
     <div class="inline-actions top-gap">
-      <button id="auto-save-btn" class="btn" onclick="saveAutoRules()">💾 Sauvegarder</button>
-      <button id="auto-gen-btn" class="btn" onclick="generateAutoPlaylists(false)">🎶 Générer dans Plex</button>
-      <button id="auto-dry-btn" class="btn ghost" onclick="generateAutoPlaylists(true)">🔍 Simulation</button>
+      <button id="auto-save-btn" class="btn" onclick="saveAutoRules()" title="Sauvegarde les règles personnalisées dans le fichier config">💾 Sauvegarder</button>
+      <button id="auto-gen-btn" class="btn" onclick="generateAutoPlaylists(false)" title="✓ CRÉE LES PLAYLISTS DANS PLEX - c'est l'action définitive!">🚀 GÉNÉRER MAINTENANT</button>
+      <button id="auto-dry-btn" class="btn ghost" onclick="generateAutoPlaylists(true)" title="Test - affiche ce qui serait créé SANS rien modifier">🔍 Simulation (test)</button>
     </div>
     <div id="auto-save-out" class="muted tiny-gap" style="margin-top:8px"></div>
   </section>
@@ -350,7 +373,7 @@ Billie Jean,Michael Jackson,Thriller</pre>
       <h2>Posters des playlists</h2>
     </div>
     <p class="muted">
-      Régénère les posters sans recréer les playlists. Tu peux forcer un style JSON si besoin.
+      Les posters sont générés automatiquement, mais vous pouvez les régénérer ou prévisualiser un style.
     </p>
     <div class="inline-actions top-gap">
       <label>
@@ -362,14 +385,14 @@ Billie Jean,Michael Jackson,Thriller</pre>
           {% endfor %}
         </select>
       </label>
-      <button id="auto-posters-btn" class="btn ghost" onclick="generatePostersOnly()">🖼 Régénérer les posters</button>
+      <button id="auto-posters-btn" class="btn ghost" onclick="generatePostersOnly()" title="Recrée les posters de TOUTES les playlists sans les modifier">🎨 Régénérer tous les posters</button>
     </div>
     <div id="auto-posters-out" class="muted tiny-gap" style="margin-top:8px"></div>
 
     <hr style="margin:16px 0;border-color:var(--border,#333)">
-    <div class="section-head">
-      <h3 style="font-size:1rem;margin:0">Prévisualiser un poster</h3>
-      <span class="section-meta">Génération instantanée, sans toucher à Plex</span>
+     <div class="section-head">
+       <h3 style="font-size:1rem;margin:0">🔍 Tester un poster avant de générer</h3>
+       <span class="section-meta">Génération instantanée - test uniquement, ne crée rien</span>
     </div>
     <div class="form-grid two-col compact-gap top-gap" style="align-items:flex-end">
       <div class="field-block">
@@ -377,12 +400,12 @@ Billie Jean,Michael Jackson,Thriller</pre>
         <input id="poster-preview-name" placeholder="Ma Playlist" oninput="posterPreviewDebounce()" value="">
       </div>
       <div class="field-block">
-        <label for="poster-preview-count">Nb de titres (optionnel)</label>
+         <label for="poster-preview-count" title="Affichage optionnel du nombre de titres sur le poster">Nb de titres (opt.)</label>
         <input id="poster-preview-count" type="number" min="0" placeholder="42" oninput="posterPreviewDebounce()" style="width:120px">
       </div>
     </div>
     <div class="inline-actions top-gap">
-      <button class="btn ghost" onclick="posterPreviewRefresh()">🔍 Prévisualiser</button>
+      <button class="btn ghost" onclick="posterPreviewRefresh()" title="Génère un aperçu du poster avec le style choisi ci-dessus">👁️ Prévisualiser</button>
     </div>
     <div id="poster-preview-area" style="margin-top:14px;display:none;text-align:center">
       <img id="poster-preview-img" src="" alt="Prévisualisation poster"
@@ -393,19 +416,21 @@ Billie Jean,Michael Jackson,Thriller</pre>
 
   <section class="surface section-block stack">
     <div class="section-head">
-      <h2>Importer selon ton choix</h2>
-      <span class="section-meta">Cases à cocher</span>
+      <h2>📋 Étape 3: Sélectionner et importer</h2>
+      <span class="section-meta">Optionnel - importez SEULEMENT ce que vous voulez</span>
     </div>
     <p class="muted">
-      Prévisualise la banque auto, coche les playlists souhaitées, puis importe uniquement la sélection dans Plex.
+      <strong>Flux:</strong> Cliquez <strong>Prévisualiser</strong> → Cochez les playlists que vous voulez → Cliquez <strong>Importer</strong>. Si vous cliquez directement "Générer" ci-dessus, TOUTES les playlists seront créées.
     </p>
     <div class="inline-actions top-gap">
-      <button class="btn ghost" onclick="previewAutoBank()">🧠 Prévisualiser</button>
-      <button class="btn ghost" onclick="setAllAutoBankChecks(true)">✅ Tout cocher</button>
-      <button class="btn ghost" onclick="setAllAutoBankChecks(false)">❎ Tout décocher</button>
-      <button class="btn" onclick="applySelectedAutoBank()">📥 Importer la sélection</button>
-      <label class="inline-check"><input type="checkbox" id="auto-append-existing"> Ajouter aux playlists existantes</label>
-      <label class="inline-check"><input type="checkbox" id="auto-replace-existing-all"> Ecraser tout (supprimer puis recreer)</label>
+       <button class="btn ghost" onclick="previewAutoBank()" title="Charge la liste de toutes les playlists possibles (chargement long)">👁️ Prévisualiser</button>
+       <button class="btn ghost" onclick="setAllAutoBankChecks(true)" title="Coche TOUTES les playlists">✓ Tout cocher</button>
+       <button class="btn ghost" onclick="setAllAutoBankChecks(false)" title="Décoche TOUTES les playlists">✗ Tout décocher</button>
+       <button class="btn" onclick="applySelectedAutoBank()" title="Importe SEULEMENT les playlists cochées dans Plex">📥 Importer la sélection</button>
+     </div>
+     <div class="inline-actions" style="margin-top: 0.5rem;">
+       <label class="inline-check" title="Ajoute les titres aux playlists existantes au lieu de les remplacer"><input type="checkbox" id="auto-append-existing"> ➕ Ajouter aux existantes</label>
+       <label class="inline-check" title="Supprime d'abord les playlists existantes PUIS les recrée - attention, destructif!"><input type="checkbox" id="auto-replace-existing-all"> 🔄 Écraser tout</label>
     </div>
     <div id="auto-bank-out" class="stack">
       <section class="surface result-panel">
@@ -446,6 +471,20 @@ try {
   __defaults = defaultsNode ? JSON.parse(defaultsNode.textContent || '{}') : {};
 } catch (_) {
   __defaults = {};
+}
+
+function _collectLastfmConfig() {
+  const user = (document.getElementById('auto-lastfm-user')?.value || '').trim();
+  const apiKey = (document.getElementById('auto-lastfm-api-key')?.value || '').trim();
+  const period = (document.getElementById('auto-lastfm-period')?.value || 'overall').trim() || 'overall';
+  const pagesRaw = Number(document.getElementById('auto-lastfm-max-pages')?.value || 5);
+  const pages = Number.isFinite(pagesRaw) ? Math.max(1, Math.min(30, Math.floor(pagesRaw))) : 5;
+  return {
+    lastfm_user: user,
+    lastfm_api_key: apiKey,
+    lastfm_period: period,
+    lastfm_max_pages: pages,
+  };
 }
 
 function tab(name) {
@@ -1298,7 +1337,7 @@ async function generateAutoPlaylists(dryRun) {
   const r = await fetch('/api/playlists/custom/generate', {
     method:'POST',
     headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({dry_run: dryRun}),
+    body: JSON.stringify({dry_run: dryRun, ..._collectLastfmConfig()}),
   });
   const d = await r.json();
   if (d.error) {
@@ -1467,7 +1506,7 @@ async function previewAutoBank() {
   const r = await fetch('/api/playlists/auto/preview', {
     method:'POST',
     headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({}),
+    body: JSON.stringify(_collectLastfmConfig()),
   });
   const d = await r.json();
   if (d.error) {
@@ -1494,7 +1533,12 @@ async function applySelectedAutoBank() {
   const r = await fetch('/api/playlists/auto/apply', {
     method:'POST',
     headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({selected_names: names, append_existing: appendExisting, replace_all_existing: replaceAllExisting}),
+    body: JSON.stringify({
+      selected_names: names,
+      append_existing: appendExisting,
+      replace_all_existing: replaceAllExisting,
+      ..._collectLastfmConfig(),
+    }),
   });
   const d = await r.json();
   if (d.error) {

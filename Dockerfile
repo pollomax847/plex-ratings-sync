@@ -37,11 +37,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         locales \
         fonts-noto-color-emoji \
         fonts-noto-extra \
+        fonts-symbola \
     && sed -i 's/^# *\(fr_FR.UTF-8\)/\1/' /etc/locale.gen \
     && locale-gen \
     && rm -rf /var/lib/apt/lists/*
 
 ENV LANG=fr_FR.UTF-8 LC_ALL=fr_FR.UTF-8
+
+# --- Police emoji compatible Pillow (vectorielle) ---------------------------
+# NotoSansSymbols2-Regular est une police vectorielle qui rend les emojis
+# en noir-et-blanc — compatible avec PIL (contrairement à NotoColorEmoji
+# qui est bitmap et incompatible).
+COPY docker/NotoSansSymbols2-Regular.ttf /usr/share/fonts/truetype/noto/NotoSansSymbols2-Regular.ttf
+RUN fc-cache -f 2>/dev/null || true
 
 # --- Docker CLI (client seul, pour contrôler le daemon de l'hôte via socket) -
 RUN DPKG_ARCH=$(dpkg --print-architecture) \

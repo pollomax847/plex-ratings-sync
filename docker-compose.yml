@@ -52,6 +52,7 @@ services:
     image: plex-scripts:latest
     container_name: plex-scripts-webui
     command: ["run", "gunicorn", "-b", "0.0.0.0:8765", "-w", "1",
+              "--timeout", "180",
               "--chdir", "/app", "--access-logfile", "-", "webui.app:app"]
     restart: unless-stopped
     ports:
@@ -62,6 +63,10 @@ services:
       PLEX_TOKEN: ${PLEX_TOKEN:-}
       PLEX_DB: "/plex/Plug-in Support/Databases/com.plexapp.plugins.library.db"
       PLEX_POSTER_STYLE_CONFIG: ${PLEX_POSTER_STYLE_CONFIG:-/app/playlists/poster_style.default.json}
+      LASTFM_USER: ${LASTFM_USER:-}
+      LASTFM_API_KEY: ${LASTFM_API_KEY:-}
+      LASTFM_PERIOD: ${LASTFM_PERIOD:-overall}
+      LASTFM_MAX_PAGES: ${LASTFM_MAX_PAGES:-5}
       AUDIO_LIBRARY: /music
       PLAYLISTS_DIR: /playlists
       LOGS_DIR: /data/logs
@@ -82,7 +87,7 @@ services:
       # Bind-mount du code (dev : pas besoin de rebuild à chaque modif)
       - "./webui:/app/webui:ro"
       - "./ratings:/app/ratings:ro"
-      - "./playlists/playlist_detector.py:/app/playlists/playlist_detector.py:ro"
+      - "./playlists:/app/playlists:ro"
       - "${SONGREC_BIN_HOST:-/usr/bin/songrec}:/usr/local/bin/songrec:ro"
     extra_hosts:
       - "host.docker.internal:host-gateway"

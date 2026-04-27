@@ -1,44 +1,19 @@
-# Dépendances pour Plex Ratings Sync
+# Dépendances Python pour Plex Scripts (webui + outils)
 # À installer avec: pip install -r requirements.txt
 
-# Pour l'accès aux bases de données SQLite
-# (inclus dans Python standard, mais au cas où)
-# sqlite3
+# --- WebUI (Flask + serveur WSGI) -------------------------------------------
+Flask>=3.0
+gunicorn>=22.0
 
-# Pour les opérations sur les chemins de fichiers
-# (inclus dans Python 3.4+, mais au cas où)
-# pathlib
+# --- Génération d'images (posters playlists) --------------------------------
+Pillow>=10.0
 
-# Pour les opérations de copie de fichiers
-# (inclus dans Python standard)
-# shutil
+# --- Édition de tags audio (mutagen) ----------------------------------------
+mutagen>=1.47
 
-# Pour les expressions régulières
-# (inclus dans Python standard)
-# re
+# --- Dépendance externe: songrec (binaire) ----------------------------------
+# Installé séparément sur l'hôte et bind-monté dans le container via
+# docker-compose.yml. Pas un package pip.
 
-# Pour les opérations JSON
-# (inclus dans Python standard)
-# json
-
-# Pour les opérations de date/heure
-# (inclus dans Python standard)
-# datetime
-
-# Pour les appels système sécurisés
-# (inclus dans Python standard)
-# subprocess
-
-# Pour les arguments de ligne de commande
-# (inclus dans Python standard)
-# argparse
-
-# Pour le logging
-# (inclus dans Python standard)
-# logging
-
-# Dépendance externe: songrec pour l'identification audio
-songrec>=0.1.0
-
-# Note: La plupart des dépendances sont incluses dans Python standard.
-# Seule songrec nécessite une installation externe.
+# Note: les modules standard Python (sqlite3, json, pathlib, subprocess,
+# argparse, logging, datetime, re, shutil) ne nécessitent rien à installer.

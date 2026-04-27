@@ -46,8 +46,11 @@ def _detect_default_plex_url() -> str:
 PLEX_URL = os.getenv("PLEX_URL", _detect_default_plex_url()).rstrip("/")
 PLEX_TOKEN = os.getenv("PLEX_TOKEN", "WQQySxr3SBPY-Sn77Yuk")
 PLEX_MACHINE_ID = os.getenv("PLEX_MACHINE_ID", "e0c0f73d4bbd7109a0aad8c16b20db9da5ffa4c4")
+LASTFM_API_URL = "https://ws.audioscrobbler.com/2.0/"
 
 class PlexAmpAutoPlaylist:
+    _no_posters: bool = False
+
     DEFAULT_POSTER_STYLE: Dict[str, Any] = {
         "size": 600,
         "overlay_alpha": 100,
@@ -83,7 +86,7 @@ class PlexAmpAutoPlaylist:
         vals = [self._safe_int(x, fallback[i], 0, 255) for i, x in enumerate(value[:4])]
         if len(vals) == 3:
             vals.append(fallback[3])
-        return tuple(vals)
+        return (vals[0], vals[1], vals[2], vals[3])
 
     def _parse_rgb(self, value: Any, fallback: Tuple[int, int, int]) -> Tuple[int, int, int]:
         rgba = self._parse_rgba(value, (fallback[0], fallback[1], fallback[2], 255))
@@ -165,6 +168,7 @@ class PlexAmpAutoPlaylist:
         all_playlists.update(self.create_year_playlists(tracks))
         all_playlists.update(self.create_genre_playlists(tracks))
         all_playlists.update(self.create_smart_playlists(tracks))
+        all_playlists.update(self.create_lastfm_default_playlists(tracks))
         all_playlists.update(self.create_discovery_playlists(tracks))
         all_playlists.update(self.create_top_this_month(tracks))
         all_playlists.update(self.create_to_review_playlists(tracks))
@@ -190,7 +194,112 @@ class PlexAmpAutoPlaylist:
         if workout_tracks:
             all_playlists[f'{AUTO_PLAYLIST_PREFIX}Running & Workout ({len(workout_tracks)} titres)'] = workout_tracks
 
-        # Playlists personnalisées depuis JSON (optionnel)
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # Playlists thématiques additionnelles (moods, activités, ambiances)
+        # Chaque entrée: (nom, mots-clés). Crée la playlist seulement si non vide.
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        EXTRA_THEMES: List[Tuple[str, List[str]]] = [
+            # — Moods & ambiances —
+            ('Chill & Relax',          ['chill', 'lofi', 'lo-fi', 'downtempo', 'relax', 'mellow', 'calm']),
+            ('Rage & Énergie',         ['rage', 'angry', 'aggressive', 'fury', 'hardcore', 'thrash', 'speed']),
+            ('Mélancolie',             ['sad', 'melancholy', 'tristesse', 'lonely', 'blue', 'tears']),
+            ('Romantique',             ['love', 'romance', 'romantic', 'amour', 'heart', 'kiss']),
+            ('Joie & Bonheur',         ['happy', 'joy', 'sunshine', 'smile', 'feel good', 'feelgood', 'good vibes']),
+            ('Nostalgie',              ['nostalgia', 'memories', 'remember', 'souvenir', 'yesterday']),
+            ('Mystique & Spirituel',   ['mystic', 'spiritual', 'meditation', 'zen', 'mantra', 'sacred', 'divine']),
+            ('Épique & Cinématique',   ['epic', 'cinematic', 'soundtrack', 'theme', 'orchestra', 'score']),
+            ('Dark & Intense',         ['dark', 'sombre', 'noir', 'gothic', 'doom', 'industrial']),
+            ('Dreamy & Éthéré',        ['dream', 'dreamy', 'ethereal', 'shoegaze', 'atmospheric', 'reverb']),
+
+            # — Activités —
+            ('Soirée & Fête',          ['party', 'fête', 'fete', 'club', 'dance floor', 'dancing', 'dancefloor']),
+            ('Apéro Chill',            ['lounge', 'bossa', 'cocktail', 'apero', 'apéro', 'jazzy']),
+            ('Travail & Focus',        ['focus', 'study', 'concentration', 'instrumental', 'work', 'coding']),
+            ('Conduite Auto',          ['drive', 'highway', 'road', 'cruising', 'route', 'voiture', 'car']),
+            ('Voyage & Découverte',    ['travel', 'voyage', 'world', 'world music', 'globetrotter']),
+            ('Sieste & Sommeil',       ['sleep', 'sommeil', 'lullaby', 'berceuse', 'dream', 'night ambient']),
+            ('Cuisine & Recette',      ['cooking', 'kitchen', 'cuisine', 'feel good', 'happy']),
+            ('Yoga & Méditation',      ['yoga', 'meditation', 'meditate', 'breathe', 'om', 'relaxation']),
+            ('Gaming Session',         ['gaming', 'game', 'epic', 'electronic', 'synthwave', 'cyber']),
+            ('Lecture & Détente',      ['piano', 'classical', 'instrumental', 'cello', 'violin', 'guitar']),
+
+            # — Saisons & météo —
+            ('Été & Soleil',           ['summer', 'été', 'ete', 'sun', 'beach', 'plage', 'tropical', 'caribbean']),
+            ('Hiver & Cocooning',      ['winter', 'hiver', 'snow', 'neige', 'cozy', 'fireplace']),
+            ('Printemps Frais',        ['spring', 'printemps', 'fresh', 'morning', 'matin', 'sunrise']),
+            ('Automne Doré',           ['autumn', 'fall', 'automne', 'rain', 'pluie', 'misty', 'golden']),
+            ('Pluie & Mélancolie',     ['rain', 'pluie', 'storm', 'orage', 'thunder', 'tears']),
+
+            # — Moments de la journée —
+            ('Réveil Doux',            ['morning', 'matin', 'sunrise', 'wake up', 'reveil', 'réveil']),
+            ('Brunch Dimanche',        ['brunch', 'sunday', 'dimanche', 'jazz', 'bossa', 'lounge']),
+            ('Crépuscule',             ['sunset', 'dusk', 'twilight', 'crepuscule', 'crépuscule', 'evening']),
+            ('Nuit Profonde',          ['night', 'midnight', 'minuit', 'nuit', 'late', 'after hours']),
+            ('After Party',            ['after', 'after hours', 'late night', 'deep house', 'minimal']),
+
+            # — Décennies / époques (si non couvertes par year_playlists) —
+            ('Vibes 60s',              ['1960', 'sixties', '60s']),
+            ('Vibes 70s',              ['1970', 'seventies', '70s']),
+            ('Vibes 80s',              ['1980', 'eighties', '80s', 'new wave', 'synthpop']),
+            ('Vibes 90s',              ['1990', 'nineties', '90s', 'grunge', 'eurodance']),
+            ('Vibes 2000s',            ['2000', '2000s', 'noughties', 'y2k']),
+            ('Vibes 2010s',            ['2010', '2010s', 'edm']),
+
+            # — Genres & sous-cultures —
+            ('Rap & Hip-Hop',          ['rap', 'hip hop', 'hip-hop', 'trap', 'gangsta', 'boom bap']),
+            ('Rock Classique',         ['classic rock', 'rock and roll', 'led', 'stones', 'beatles']),
+            ('Hard Rock & Metal',      ['metal', 'hard rock', 'heavy', 'thrash', 'doom', 'metalcore']),
+            ('Punk & Garage',          ['punk', 'garage', 'oi', 'hardcore punk', 'pop punk', 'skate']),
+            ('Indie & Alternatif',     ['indie', 'alternative', 'alt rock', 'lo-fi', 'bedroom']),
+            ('Pop FR',                 ['variete', 'variété', 'chanson', 'francaise', 'française', 'french pop']),
+            ('Pop US/UK',              ['pop', 'mainstream', 'top 40', 'billboard', 'chart']),
+            ('Jazz & Blues',           ['jazz', 'blues', 'swing', 'bebop', 'cool jazz']),
+            ('Reggae & Roots',         ['reggae', 'roots', 'rasta', 'dub', 'ska', 'rocksteady']),
+            ('Latin Vibes',            ['latin', 'salsa', 'bachata', 'reggaeton', 'cumbia', 'latino']),
+            ('K-Pop & J-Pop',          ['kpop', 'k-pop', 'k pop', 'jpop', 'j-pop', 'j pop', 'korean', 'japanese']),
+            ('Country & Folk',         ['country', 'folk', 'americana', 'bluegrass', 'cowboy']),
+            ('Classical & Orchestre',  ['classical', 'classique', 'orchestra', 'symphony', 'concerto', 'baroque', 'chopin', 'mozart', 'bach', 'beethoven']),
+            ('Electronic & Techno',    ['techno', 'house', 'electronic', 'edm', 'trance', 'dubstep']),
+            ('Synthwave & Retrowave',  ['synthwave', 'retrowave', 'vaporwave', 'outrun', 'synth pop']),
+            ('Ambient & Drone',        ['ambient', 'drone', 'soundscape', 'atmospheric', 'new age']),
+            ('Funk & Soul',            ['funk', 'soul', 'motown', 'rhythm and blues', 'r&b', 'rnb']),
+            ('Reggaeton & Urban',      ['reggaeton', 'urban', 'latin urban', 'dembow']),
+
+            # — Cas spéciaux —
+            ('Instrumentaux',          ['instrumental', 'no vocals', 'sans paroles', 'piano solo', 'guitar solo']),
+            ('Live & Concerts',        ['live', 'concert', 'unplugged', 'mtv', 'session', 'au zenith']),
+            ('Acoustique',             ['acoustic', 'unplugged', 'acoustique', 'mtv unplugged']),
+            ('Remixes & Edits',        ['remix', 'edit', 'rework', 'bootleg', 'mashup']),
+            ('Covers & Reprises',      ['cover', 'reprise', 'tribute', 'version']),
+            ('Bandes Originales',      ['soundtrack', 'ost', 'bo', 'b.o.', 'theme', 'cinema']),
+            ('Karaoké',                ['karaoke', 'karaoké', 'sing along', 'singalong']),
+            ('Génériques TV/Films',    ['theme', 'tv', 'générique', 'generique', 'opening', 'ending']),
+            ('Christmas & Fêtes',      ['christmas', 'noel', 'noël', 'holiday', 'xmas', 'jingle']),
+            ('Anniversaire',           ['birthday', 'anniversaire', 'happy birthday', 'celebrate']),
+            ('Mariage',                ['wedding', 'mariage', 'marry', 'first dance', 'bridal']),
+        ]
+
+        # Pré-calcul des blobs de recherche pour accélérer le scan multi-thèmes
+        # (évite 66 × 204k recomputations de la chaîne de recherche)
+        track_blobs: List[str] = []
+        for t in tracks:
+            blob = ' '.join(t.get('genres', [t.get('genre', '')]))
+            blob += ' ' + (t.get('album', '') or '') + ' ' + (t.get('title', '') or '')
+            track_blobs.append(blob.lower())
+
+        for theme_name, theme_keywords in EXTRA_THEMES:
+            full_key = f'{AUTO_PLAYLIST_PREFIX}{theme_name}'
+            # Évite d'écraser une playlist déjà créée par une étape précédente
+            if any(k.startswith(full_key) for k in all_playlists.keys()):
+                continue
+            pattern = re.compile('|'.join(r'\b' + re.escape(k) + r'\b' for k in theme_keywords))
+            matched = [tracks[i] for i, blob in enumerate(track_blobs) if pattern.search(blob)]
+            # Seuil mini de 5 titres pour éviter les playlists ridicules
+            if len(matched) >= 5:
+                # Limite à 500 titres triés par lectures + rating
+                matched.sort(key=lambda t: (t.get('play_count', 0) or 0, t.get('rating', 0) or 0), reverse=True)
+                matched = matched[:500]
+                all_playlists[f'{full_key} ({len(matched)} titres)'] = matched
         all_playlists.update(self._load_custom_playlists_from_json(tracks, custom_config))
         return all_playlists
 
@@ -361,11 +470,23 @@ class PlexAmpAutoPlaylist:
                     f.write(rel_path + "\n")
             exported += 1
         self.logger.info(f"✅ {exported} playlists exportées vers {export_path}")
-    def __init__(self, plex_db_path: str, verbose: bool = False):
+    def __init__(
+        self,
+        plex_db_path: str,
+        verbose: bool = False,
+        lastfm_user: str = "",
+        lastfm_api_key: str = "",
+        lastfm_period: str = "overall",
+        lastfm_max_pages: int = 5,
+    ):
         self.plex_db_path = Path(plex_db_path)
         self.verbose = verbose
         self._last_tracks: List[Dict] = []
         self._last_playlists: Dict[str, List[Dict]] = {}
+        self.lastfm_user = (lastfm_user or os.getenv("LASTFM_USER", "")).strip()
+        self.lastfm_api_key = (lastfm_api_key or os.getenv("LASTFM_API_KEY", "")).strip()
+        self.lastfm_period = (lastfm_period or os.getenv("LASTFM_PERIOD", "overall")).strip() or "overall"
+        self.lastfm_max_pages = max(1, int(lastfm_max_pages or os.getenv("LASTFM_MAX_PAGES", 5)))
         self.setup_logging()
         self.poster_style = self._load_poster_style()
         
@@ -1768,6 +1889,175 @@ class PlexAmpAutoPlaylist:
         
         return smart_playlists
 
+    def _fetch_lastfm_top_tracks(self) -> List[Dict[str, Any]]:
+        """Récupère les tops tracks Last.fm de l'utilisateur configuré."""
+        if not self.lastfm_user or not self.lastfm_api_key:
+            self.logger.info("ℹ️ Last.fm non configuré (LASTFM_USER / LASTFM_API_KEY absents)")
+            return []
+
+        merged: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        page = 1
+        while page <= self.lastfm_max_pages:
+            params = {
+                "method": "user.gettoptracks",
+                "user": self.lastfm_user,
+                "api_key": self.lastfm_api_key,
+                "format": "json",
+                "period": self.lastfm_period,
+                "limit": 1000,
+                "page": page,
+            }
+            url = f"{LASTFM_API_URL}?{urllib.parse.urlencode(params)}"
+
+            try:
+                with urllib.request.urlopen(url, timeout=25) as resp:
+                    payload = json.loads(resp.read().decode("utf-8", errors="replace"))
+            except Exception as exc:
+                self.logger.warning(f"⚠️ Last.fm: erreur API page {page}: {exc}")
+                break
+
+            toptracks = payload.get("toptracks") if isinstance(payload, dict) else None
+            chunk = toptracks.get("track") if isinstance(toptracks, dict) else []
+            if isinstance(chunk, dict):
+                chunk = [chunk]
+            if not isinstance(chunk, list) or not chunk:
+                break
+
+            for item in chunk:
+                if not isinstance(item, dict):
+                    continue
+                title = str(item.get("name") or "").strip()
+                artist_obj = item.get("artist")
+                if isinstance(artist_obj, dict):
+                    artist = str(artist_obj.get("name") or artist_obj.get("#text") or "").strip()
+                else:
+                    artist = str(artist_obj or "").strip()
+                if not title or not artist:
+                    continue
+                try:
+                    plays = int(item.get("playcount") or 0)
+                except Exception:
+                    plays = 0
+                key = (artist.lower(), title.lower())
+                prev = merged.get(key)
+                if prev is None or plays > int(prev.get("lastfm_play_count") or 0):
+                    merged[key] = {
+                        "artist": artist,
+                        "title": title,
+                        "lastfm_play_count": plays,
+                    }
+
+            attr = toptracks.get("@attr") if isinstance(toptracks, dict) else {}
+            total_pages = 1
+            try:
+                total_pages = int(attr.get("totalPages") or 1)
+            except Exception:
+                total_pages = 1
+            if page >= total_pages:
+                break
+            page += 1
+
+        rows = sorted(merged.values(), key=lambda t: int(t.get("lastfm_play_count") or 0), reverse=True)
+        self.logger.info(f"📡 Last.fm: {len(rows)} top tracks récupérés ({self.lastfm_period})")
+        return rows
+
+    def create_lastfm_default_playlists(self, tracks: List[Dict]) -> Dict[str, List[Dict]]:
+        """Crée des playlists Last.fm à partir des écoutes réelles du compte utilisateur."""
+        playlists: Dict[str, List[Dict]] = {}
+        lastfm_tracks = self._fetch_lastfm_top_tracks()
+        if not lastfm_tracks:
+            return playlists
+
+        def _norm(value: str) -> str:
+            txt = unicodedata.normalize('NFKD', str(value or ''))
+            txt = ''.join(ch for ch in txt if not unicodedata.combining(ch))
+            txt = txt.lower()
+            txt = re.sub(r"[^a-z0-9]+", " ", txt)
+            return ' '.join(txt.split())
+
+        by_artist_title: Dict[Tuple[str, str], List[Dict]] = {}
+        by_title: Dict[str, List[Dict]] = {}
+        for track in tracks:
+            n_artist = _norm(track.get('artist') or '')
+            n_title = _norm(track.get('title') or '')
+            if not n_title:
+                continue
+            by_title.setdefault(n_title, []).append(track)
+            if n_artist:
+                by_artist_title.setdefault((n_artist, n_title), []).append(track)
+
+        matched_by_id: Dict[int, Dict] = {}
+        for lf in lastfm_tracks:
+            n_artist = _norm(lf.get('artist') or '')
+            n_title = _norm(lf.get('title') or '')
+            candidates = by_artist_title.get((n_artist, n_title), [])
+            if not candidates:
+                title_only = by_title.get(n_title, [])
+                if len(title_only) == 1:
+                    candidates = title_only
+            if not candidates:
+                continue
+
+            best = sorted(
+                candidates,
+                key=lambda t: (
+                    int(t.get('rating') or 0),
+                    int(t.get('play_count') or 0),
+                    int(t.get('duration_ms') or 0),
+                ),
+                reverse=True,
+            )[0]
+
+            merged = dict(best)
+            merged['lastfm_play_count'] = int(lf.get('lastfm_play_count') or 0)
+            track_id = int(merged.get('id') or 0)
+            prev = matched_by_id.get(track_id)
+            if prev is None or merged['lastfm_play_count'] > int(prev.get('lastfm_play_count') or 0):
+                matched_by_id[track_id] = merged
+
+        matched = list(matched_by_id.values())
+        if len(matched) < 20:
+            self.logger.info(f"ℹ️ Last.fm: matching insuffisant ({len(matched)} titres liés à Plex)")
+            return playlists
+
+        matched.sort(key=lambda t: int(t.get('lastfm_play_count') or 0), reverse=True)
+        play_values = sorted(int(t.get('lastfm_play_count') or 0) for t in matched)
+
+        def _percentile(values: List[int], ratio: float) -> int:
+            if not values:
+                return 0
+            idx = int((len(values) - 1) * ratio)
+            idx = max(0, min(len(values) - 1, idx))
+            return int(values[idx])
+
+        p50 = max(1, _percentile(play_values, 0.50))
+        p75 = max(p50 + 1, _percentile(play_values, 0.75))
+        p90 = max(p75 + 1, _percentile(play_values, 0.90))
+
+        top_heavy = [t for t in matched if int(t.get('lastfm_play_count') or 0) >= p90]
+        strong_rotation = [t for t in matched if p75 <= int(t.get('lastfm_play_count') or 0) < p90]
+        medium_rotation = [t for t in matched if p50 <= int(t.get('lastfm_play_count') or 0) < p75]
+        to_push = [t for t in matched if int(t.get('lastfm_play_count') or 0) < p50 and int(t.get('rating') or 0) >= 6]
+
+        if len(top_heavy) >= 15:
+            sel = top_heavy[:300]
+            playlists[f"{AUTO_PLAYLIST_PREFIX}📈 Last.fm Top écoutes ({len(sel)} titres)"] = sel
+        if len(strong_rotation) >= 15:
+            sel = strong_rotation[:350]
+            playlists[f"{AUTO_PLAYLIST_PREFIX}🔥 Last.fm Rotation forte ({len(sel)} titres)"] = sel
+        if len(medium_rotation) >= 15:
+            sel = medium_rotation[:350]
+            playlists[f"{AUTO_PLAYLIST_PREFIX}🌊 Last.fm Rotation moyenne ({len(sel)} titres)"] = sel
+        if len(to_push) >= 20:
+            sel = to_push[:300]
+            playlists[f"{AUTO_PLAYLIST_PREFIX}🌱 Last.fm À pousser ({len(sel)} titres)"] = sel
+
+        self.logger.info(
+            "📻 Last.fm playlists: "
+            f"{len(playlists)} créées (match Plex: {len(matched)}/{len(lastfm_tracks)})"
+        )
+        return playlists
+
     def create_discovery_playlists(self, tracks: List[Dict]) -> Dict[str, List[Dict]]:
         """Crée une playlist 'Découvertes' pour les pistes 2★ peu écoutées"""
         discovery_playlists = {}
@@ -2055,7 +2345,7 @@ class PlexAmpAutoPlaylist:
             items_root = ET.fromstring(resp.read())
 
             # Dossier sur USB
-            safe_name = self._safe_filename(pl_title)
+            safe_name = self._safe_filename(pl_title or 'playlist')
             dest_dir = os.path.join(usb_path, safe_name)
             os.makedirs(dest_dir, exist_ok=True)
 
@@ -2236,6 +2526,7 @@ class PlexAmpAutoPlaylist:
     POSTER_THEMES = [
         # Auto playlists
         (['⭐', 'étoile'], '⭐', [(255, 180, 0), (200, 100, 0)], None),
+        (['📈', 'last.fm', 'lastfm'], '📈', [(120, 0, 180), (255, 80, 120)], None),
         (['🔥', 'top 100', 'plus écoutés'], '🔥', [(200, 50, 0), (255, 150, 0)], None),
         (['❤️', 'favoris'], '❤️', [(180, 0, 50), (255, 50, 100)], None),
         (['🔍', 'redécouvrir'], '🔍', [(0, 100, 150), (0, 200, 200)], None),
@@ -2299,6 +2590,60 @@ class PlexAmpAutoPlaylist:
         (['génération top 50', 'generation top 50'], '🎤', [(0, 50, 150), (200, 50, 200)], None),
     ]
 
+    def _pick_style_for_playlist(self, title: str) -> Dict[str, Any]:
+        """Sélectionne le style à appliquer pour une playlist donnée.
+
+        Si ``self.poster_style`` contient une clé ``rotate`` (liste de chemins
+        ou objets {file, keywords}), on choisit un style :
+          1) prioritaire si ses ``keywords`` matchent le titre
+          2) sinon hash(title) pour garantir un choix stable mais varié
+        Sinon retourne le style global.
+        """
+        rotate = self.poster_style.get("rotate")
+        if not rotate or not isinstance(rotate, list):
+            return self.poster_style
+
+        title_lower = title.lower()
+        # 1) Recherche d'un style avec keyword qui matche
+        keyword_matches: List[str] = []
+        plain_paths: List[str] = []
+        for entry in rotate:
+            if isinstance(entry, str):
+                plain_paths.append(entry)
+            elif isinstance(entry, dict):
+                fpath = str(entry.get("file", "")).strip()
+                if not fpath:
+                    continue
+                kws = entry.get("keywords") or []
+                if kws and any(str(k).lower() in title_lower for k in kws):
+                    keyword_matches.append(fpath)
+                else:
+                    plain_paths.append(fpath)
+
+        candidates = keyword_matches if keyword_matches else plain_paths
+        if not candidates:
+            return self.poster_style
+
+        # Choix déterministe par hash du titre (stable d'un run à l'autre)
+        import hashlib
+        h = int(hashlib.md5(title.encode("utf-8")).hexdigest(), 16)
+        chosen_path = candidates[h % len(candidates)]
+
+        # Charge le style choisi (avec fallback sur le style global en cas d'erreur)
+        cfg_path = Path(chosen_path)
+        if not cfg_path.is_absolute():
+            cfg_path = (Path(__file__).parent / chosen_path).resolve()
+            if not cfg_path.exists():
+                cfg_path = (Path(__file__).parent.parent / chosen_path).resolve()
+        try:
+            raw = json.loads(cfg_path.read_text(encoding="utf-8"))
+            if not isinstance(raw, dict):
+                raise ValueError("non-objet")
+            return self._normalize_style(raw)
+        except Exception as e:
+            self.logger.debug(f"  ⚠️ Style rotatif {cfg_path} invalide: {e}")
+            return self.poster_style
+
     def _find_background_image(self, title: str) -> Optional[Path]:
         """Cherche une image de fond dans poster_backgrounds/ correspondant au titre.
 
@@ -2337,7 +2682,7 @@ class PlexAmpAutoPlaylist:
 
         return best if best_score > 0 else None
 
-    def _find_poster_theme(self, title: str) -> Tuple[str, list, list]:
+    def _find_poster_theme(self, title: str) -> Tuple[str, Any, Any]:
         """Trouve le thème visuel pour un titre de playlist. Retourne (emoji, [c1], [c2])."""
         title_lower = title.lower()
 
@@ -2394,22 +2739,9 @@ class PlexAmpAutoPlaylist:
             return out
 
 
-        FONT_PATH = str(self.poster_style.get("font_path", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"))
-        EMOJI_FONT_PATH = str(self.poster_style.get("emoji_font_path", "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf"))
-        SIZE = int(self.poster_style.get("size", 600))
-        OVERLAY_ALPHA = int(self.poster_style.get("overlay_alpha", 100))
-        TITLE_SIZE = int(self.poster_style.get("title_size", 44))
-        SUBTITLE_SIZE = int(self.poster_style.get("subtitle_size", 24))
-        EMOJI_SIZE = int(self.poster_style.get("emoji_size", 80))
-        TITLE_START_Y = int(self.poster_style.get("title_start_y", 300))
-        TITLE_LINE_STEP = int(self.poster_style.get("title_line_step", 50))
-        TEXT_PADDING = int(self.poster_style.get("text_padding", 60))
-        TITLE_COLOR = tuple(self.poster_style.get("title_color", (255, 255, 255, 255)))
-        TITLE_SHADOW_COLOR = tuple(self.poster_style.get("title_shadow_color", (0, 0, 0, 180)))
-        TITLE_STROKE_WIDTH = int(self.poster_style.get("title_stroke_width", 0))
-        TITLE_STROKE_COLOR = tuple(self.poster_style.get("title_stroke_color", [0, 0, 0, 255]))
-        SUBTITLE_COLOR = tuple(self.poster_style.get("subtitle_color", (200, 200, 200, 220)))
-        LINE_COLOR = tuple(self.poster_style.get("line_color", (255, 255, 255, 80)))
+        # Constantes par défaut (utilisées si pas de rotation par playlist)
+        ROTATE_ENABLED = bool(self.poster_style.get("rotate"))
+        SIZE_DEFAULT = int(self.poster_style.get("size", 600))
 
         # Récupérer toutes les playlists
         try:
@@ -2422,7 +2754,7 @@ class PlexAmpAutoPlaylist:
             return
 
         playlists = root.findall('.//Playlist')
-        self.logger.info(f"🎨 Génération des posters pour {len(playlists)} playlists...")
+        self.logger.info(f"🎨 Génération des posters pour {len(playlists)} playlists{' (rotation active)' if ROTATE_ENABLED else ''}...")
 
         ok = 0
         fail = 0
@@ -2431,6 +2763,28 @@ class PlexAmpAutoPlaylist:
             rk = playlist.get('ratingKey', '')
             if not rk:
                 continue
+
+            # Choix du style (rotation par playlist si activée)
+            saved_style = self.poster_style
+            if ROTATE_ENABLED:
+                self.poster_style = self._pick_style_for_playlist(title)
+
+            FONT_PATH = str(self.poster_style.get("font_path", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"))
+            EMOJI_FONT_PATH = str(self.poster_style.get("emoji_font_path", "/usr/share/fonts/truetype/ancient-scripts/Symbola_hint.ttf"))
+            SIZE = int(self.poster_style.get("size", 600))
+            OVERLAY_ALPHA = int(self.poster_style.get("overlay_alpha", 100))
+            TITLE_SIZE = int(self.poster_style.get("title_size", 44))
+            SUBTITLE_SIZE = int(self.poster_style.get("subtitle_size", 24))
+            EMOJI_SIZE = int(self.poster_style.get("emoji_size", 80))
+            TITLE_START_Y = int(self.poster_style.get("title_start_y", 300))
+            TITLE_LINE_STEP = int(self.poster_style.get("title_line_step", 50))
+            TEXT_PADDING = int(self.poster_style.get("text_padding", 60))
+            TITLE_COLOR = tuple(self.poster_style.get("title_color", (255, 255, 255, 255)))
+            TITLE_SHADOW_COLOR = tuple(self.poster_style.get("title_shadow_color", (0, 0, 0, 180)))
+            TITLE_STROKE_WIDTH = int(self.poster_style.get("title_stroke_width", 0))
+            TITLE_STROKE_COLOR = tuple(self.poster_style.get("title_stroke_color", [0, 0, 0, 255]))
+            SUBTITLE_COLOR = tuple(self.poster_style.get("subtitle_color", (200, 200, 200, 220)))
+            LINE_COLOR = tuple(self.poster_style.get("line_color", (255, 255, 255, 80)))
 
             emoji, c1, c2 = self._find_poster_theme(title)
 
@@ -2529,6 +2883,10 @@ class PlexAmpAutoPlaylist:
             except Exception as e:
                 fail += 1
                 self.logger.warning(f"  ⚠️ Poster échoué pour {title}: {e}")
+
+            # Restaure le style global après rotation
+            if ROTATE_ENABLED:
+                self.poster_style = saved_style
 
         self.logger.info(f"🖼️ Posters: {ok} appliqués, {fail} échoués sur {len(playlists)}")
 
@@ -2696,13 +3054,33 @@ def main():
                        help="Affiche un rapport des pistes sans tag année. "
                             "Fournir un chemin pour exporter en CSV (ex. --report-missing-year rapport.csv). "
                             "Sortie console seule si omis.")
+    parser.add_argument("--lastfm-user",
+                       default=os.getenv("LASTFM_USER", ""),
+                       help="Nom d'utilisateur Last.fm")
+    parser.add_argument("--lastfm-api-key",
+                       default=os.getenv("LASTFM_API_KEY", ""),
+                       help="API key Last.fm")
+    parser.add_argument("--lastfm-period",
+                       default=os.getenv("LASTFM_PERIOD", "overall"),
+                       choices=["overall", "7day", "1month", "3month", "6month", "12month"],
+                       help="Période Last.fm pour user.getTopTracks")
+    parser.add_argument("--lastfm-max-pages", type=int,
+                       default=int(os.getenv("LASTFM_MAX_PAGES", "5") or 5),
+                       help="Nombre de pages Last.fm à récupérer (1000 tracks/page)")
     
     args = parser.parse_args()
     
     if args.poster_style_config:
         os.environ["PLEX_POSTER_STYLE_CONFIG"] = args.poster_style_config
 
-    generator = PlexAmpAutoPlaylist(args.plex_db, verbose=args.verbose)
+    generator = PlexAmpAutoPlaylist(
+        args.plex_db,
+        verbose=args.verbose,
+        lastfm_user=args.lastfm_user,
+        lastfm_api_key=args.lastfm_api_key,
+        lastfm_period=args.lastfm_period,
+        lastfm_max_pages=args.lastfm_max_pages,
+    )
     generator._no_posters = args.no_posters
 
     # Mode rapport tags année manquants (exclusif)
