@@ -1,0 +1,131 @@
+{
+  "mode": "RÉEL",
+  "plex_url": "http://host.docker.internal:32400",
+  "songrec_timeout": 180,
+  "beet_timeout": 600,
+  "ok": 27,
+  "errors": 2,
+  "skipped": 13,
+  "failures": [
+    {
+      "rating_key": "1811581",
+      "artist": "Aaron Smith",
+      "title": "Dancin'",
+      "file": "/media/paulceline/Music/music/Dance Anthems (Summer Edition 2013)/14 - Dancin'.mp3",
+      "stage": "resolve",
+      "reason": "file-not-found"
+    },
+    {
+      "rating_key": "1811572",
+      "artist": "Aaron Smith",
+      "title": "Dancin (Krono remix)",
+      "file": "/media/paulceline/Music/music/Dancin (Krono remix)/01 - Dancin (Krono remix).mp3",
+      "stage": "resolve",
+      "reason": "file-not-found"
+    },
+    {
+      "rating_key": "1811577",
+      "artist": "Aaron Smith",
+      "title": "Dancin (Krono Remix) [feat. Luvli]",
+      "file": "/media/paulceline/Music/music/Dancin (Krono Remix) [feat. Luvli] - Single/Dancin (Krono Remix) [feat. Luvli].mp3",
+      "stage": "resolve",
+      "reason": "file-not-found"
+    },
+    {
+      "rating_key": "1811561",
+      "artist": "Aaron Smith",
+      "title": "红番区",
+      "file": "/media/paulceline/Music/music/欢乐氛围/05 - 红番区.mp3",
+      "stage": "resolve",
+      "reason": "file-not-found"
+    },
+    {
+      "rating_key": "1811575",
+      "artist": "Aaron Smith",
+      "title": "Dancin (Featuring Luvli) [Krono Remix] [feat. Luvli]",
+      "file": "/media/paulceline/Music/music/Ibiza 2019/01 - Dancin (Featuring Luvli) [Krono Remix] [feat. Luvli].mp3",
+      "stage": "resolve",
+      "reason": "file-not-found"
+    },
+    {
+      "rating_key": "1682242",
+      "artist": "GIMS",
+      "title": "APRÈS-VOUS MADAME",
+      "file": "/mnt/MyBook/itunes/Music/GIMS/LES DERNIERES VOLONTES DE MOZART (SYMPHONY)/3. APRES-VOUS MADAME.mp3",
+      "stage": "resolve",
+      "reason": "file-not-found"
+    },
+    {
+      "rating_key": "1211825",
+      "artist": "HATIK",
+      "title": "Die 15 Art Den Regen Zu Beschreiben",
+      "file": "/mnt/MyBook/itunes/Music/Various_artists/Groove_Anthology_-_Kaleidoscopic_Beats/1-Die_15_Art_Den_Regen_Zu_Beschreiben.opus",
+      "stage": "resolve",
+      "reason": "file-not-found"
+    },
+    {
+      "rating_key": "1180230",
+      "artist": "James Hype",
+      "title": "I Was Lovin' You (feat. Dots Per Inch & Ayak) (Sammy Porter Remix)",
+      "file": "/mnt/MyBook/itunes/Music/James Hype/I Was Lovin_ You (feat. Dots Per Inch & Ayak) (Remixes) (2019)/01 - I Was Lovin' You (feat. Dots Per Inch & Ayak) (Sammy Porter Remix).opus",
+      "stage": "resolve",
+      "reason": "file-not-found"
+    },
+    {
+      "rating_key": "1626540",
+      "artist": "Jess Glynne",
+      "title": "My Love",
+      "file": "/mnt/MyBook/itunes/Music/Route 94/I Cry When I Laugh (2015)/20 - My Love.mp3",
+      "stage": "resolve",
+      "reason": "file-not-found"
+    },
+    {
+      "rating_key": "1878560",
+      "artist": "Jess Glynne",
+      "title": "",
+      "file": "/mnt/MyBook/itunes/Downloads/I Cry When I Laugh/20. Jess Glynne - My Love.flac",
+      "stage": "resolve",
+      "reason": "file-not-found"
+    },
+    {
+      "rating_key": "1881738",
+      "artist": "Jess Glynne",
+      "title": "My Love",
+      "file": "/itunes/Music/I Cry When I Laugh/20. Jess Glynne - My Love.flac",
+      "stage": "songrec",
+      "reason": "songrec-failed"
+    },
+    {
+      "rating_key": "1293253",
+      "artist": "René Joly",
+      "title": "Démons et merveilles",
+      "file": "/mnt/MyBook/itunes/Music/René_Joly/Démons_et_merveilles/1-Démons_et_merveilles.opus",
+      "stage": "resolve",
+      "reason": "file-not-found"
+    },
+    {
+      "rating_key": "1685475",
+      "artist": "Soprano",
+      "title": "Fresh Prince",
+      "file": "/itunes/Music/Cosmopolitanie (Cosmo Tour Edition) (2014)/Fresh Prince (1).opus",
+      "stage": "songrec",
+      "reason": "songrec-failed"
+    },
+    {
+      "rating_key": "1823782",
+      "artist": "Soprano",
+      "title": "",
+      "file": "/media/paulceline/Music/music/Unsorted/15 Soprano feat. Black Renega - Ferme les yeux et imagine-toi (2).flac",
+      "stage": "resolve",
+      "reason": "file-not-found"
+    },
+    {
+      "rating_key": "1826744",
+      "artist": "Various Artists",
+      "title": "Just Sing (Trolls World Tour)",
+      "file": "/media/paulceline/Music/music/TROLLS World Tour (Original Motion Picture Soundtrack) (2020)/Just Sing (Trolls World Tour).flac",
+      "stage": "resolve",
+      "reason": "file-not-found"
+    }
+  ]
+}
